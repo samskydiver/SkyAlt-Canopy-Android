@@ -80,8 +80,9 @@ fun SimulatorScreen(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val showsProfile = state.replay != null
             val profileWidth = if (showsProfile) maxWidth / 4 else 0.dp
+            val viewWidth = maxWidth - profileWidth
             Row(Modifier.fillMaxSize()) {
-                Box(Modifier.width(maxWidth - profileWidth).fillMaxHeight()) {
+                Box(Modifier.width(viewWidth).fillMaxHeight()) {
                     AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize())
                     Hud(state, engine, barHeight, settingsOpen, ::openSettings)
                 }
@@ -114,9 +115,10 @@ fun SimulatorScreen(
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
             BoxWithConstraints {
+                val drawerWidth = minOf(400.dp, maxWidth * 0.48f)
                 Drawer(
                     title = LocalStrings.current("Settings"),
-                    modifier = Modifier.width(minOf(400.dp, maxWidth * 0.48f)),
+                    modifier = Modifier.width(drawerWidth),
                     onClose = { focus.clearFocus(); onSettingsOpen(false) },
                 ) {
                     SettingsContent(
