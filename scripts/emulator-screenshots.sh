@@ -9,11 +9,13 @@ adb shell settings put system user_rotation 1
 shot() { sleep "${2:-1}"; adb exec-out screencap -p > "screenshots/$1.png"; }
 # Skip the one-time "Viewing full screen" hint, which would cover the app.
 adb shell settings put secure immersive_mode_confirmations confirmed
+# A 16:9 screen, the shape Google Play takes for phone screenshots.
+adb shell wm size 1080x1920
 adb logcat -c
 adb shell am start -n com.skyalt.canopy/.MainActivity
 shot 01-settings 8
 # Screen size, to tap relative positions.
-read W H < <(adb shell wm size | sed -E 's/.* ([0-9]+)x([0-9]+).*/\2 \1/')
+read W H < <(adb shell wm size | tail -1 | sed -E 's/.* ([0-9]+)x([0-9]+).*/\2 \1/')
 echo "landscape ${W}x${H}"
 # Close the settings drawer by tapping the dimmed left side.
 adb shell input tap $((W / 5)) $((H / 2))
@@ -47,6 +49,12 @@ sys.exit(1)
 PY
   adb shell input tap $(cat /tmp/xy)
 }
+# Fly on to the ground, then replay the run with its profile.
+shot 06b-landed 75
+tap_ui "REPLAY" || echo "no replay button"
+shot 06c-replay 6
+tap_ui "EXIT REPLAY" || echo "no exit replay"
+sleep 1
 # Motion capture: the drawer, the camera on, then the 3D view with the picture.
 adb shell pm grant com.skyalt.canopy android.permission.CAMERA
 adb shell input keyevent KEYCODE_WAKEUP
