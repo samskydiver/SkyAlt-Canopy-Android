@@ -33,11 +33,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -119,6 +121,8 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
                     if (points.size == 2) drawLine(hex(0xffd23f), points[0], points[1], 2.dp.toPx())
                 }
             }
+            // North is straight up in this view, as in the 3D scene and the start-point map.
+            NorthArrow(Modifier.align(Alignment.TopStart).padding(14.dp))
         }
 
         val shape = RoundedCornerShape(10.dp)
@@ -135,6 +139,7 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
         ) {
             Text(s("Edit dropzone picture").uppercase(), style = displayStyle(13.sp), color = p.muted)
             Note(s("Drag to move · pinch to size · two fingers to turn"))
+            Note(s("Turn the picture so its north points to N"))
             FieldLabel(s("Picture width"), "${state.units.distanceText(dz.widthMeters)} ${state.units.distanceSymbol}")
             FieldLabel(s("Rotation"), "${dz.rotationDegrees.roundToInt()}°")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -173,3 +178,25 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
     }
 }
 
+
+/** A fixed north arrow: a red north half, a white south half and the letter N above. */
+@Composable
+private fun NorthArrow(modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("N", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Canvas(Modifier.requiredSize(22.dp, 40.dp)) {
+            val cx = size.width / 2
+            val mid = size.height / 2
+            val north = Path().apply { moveTo(cx, 0f); lineTo(size.width, mid); lineTo(0f, mid); close() }
+            val south = Path().apply { moveTo(0f, mid); lineTo(size.width, mid); lineTo(cx, size.height); close() }
+            drawPath(north, hex(0xe4582b))
+            drawPath(south, Color.White)
+            drawPath(south, Color.Black.copy(alpha = 0.4f), style = Stroke(1.dp.toPx()))
+        }
+    }
+}

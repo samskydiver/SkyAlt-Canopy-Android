@@ -60,6 +60,7 @@ class Strings(val chinese: Boolean) {
         "Double-tap to set the start · drag to move the map or the windsock · pinch to zoom" to "双击设定起始点 · 拖动平移地图或风向袋 · 双指缩放",
         "Drag here to turn the camera, pinch to zoom" to "在此拖动转动镜头，双指缩放",
         "Drag to move · pinch to size · two fingers to turn" to "拖动移动 · 双指缩放 · 双指旋转",
+        "Turn the picture so its north points to N" to "旋转图片，让图上的北方对准 N",
         "Dropzone aerial view" to "着陆场航拍图",
         "Edit dropzone picture" to "编辑落地区图片",
         "Edit picture" to "编辑图片",
