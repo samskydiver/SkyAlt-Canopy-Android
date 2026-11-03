@@ -47,7 +47,7 @@ fun MocapPanel(capture: MotionCaptureController, onToggleCamera: () -> Unit, onO
                 onClick = onToggleCamera,
             )
         }
-        SwitchRow(s("Mirror"), capture.isMirrored) { capture.setMirrored(it) }
+        SwitchRow(s("Mirror"), capture.isMirrored) { capture.changeMirrored(it) }
         SwitchRow(s("Head turns the camera"), capture.isHeadCameraOn) { capture.setHeadCamera(it) }
         if (capture.isHeadCameraOn) {
             ChipButton(s("Re-centre"), isDisabled = !capture.active) { capture.recentreHead() }

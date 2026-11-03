@@ -141,7 +141,7 @@ class MotionCaptureController(private val context: Context) : MotionInput {
     private var framePullRight = 0.0
     @Volatile private var mirrorForFrames = isMirrored
 
-    fun setMirrored(on: Boolean) {
+    fun changeMirrored(on: Boolean) {
         isMirrored = on
         mirrorForFrames = on
         prefs.edit().putBoolean(MIRROR_KEY, on).apply()

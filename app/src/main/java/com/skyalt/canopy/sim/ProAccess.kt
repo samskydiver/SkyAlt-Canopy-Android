@@ -170,7 +170,7 @@ class ProAccess(context: Context) {
             p.purchaseState == Purchase.PurchaseState.PURCHASED && p.products.any { it in PRODUCT_IDS }
         }
         acknowledge(active)
-        setPro(active.isNotEmpty())
+        storePro(active.isNotEmpty())
         return true
     }
 
@@ -199,7 +199,7 @@ class ProAccess(context: Context) {
         }
     }
 
-    private fun setPro(value: Boolean) {
+    private fun storePro(value: Boolean) {
         isPro = value
         prefs.edit().putBoolean(CACHE_KEY, value).apply()
     }
