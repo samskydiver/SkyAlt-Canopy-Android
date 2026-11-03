@@ -70,10 +70,10 @@ fun CastControls(
                 }
                 if (capture.active) {
                     val half = (maxWidth - 24.dp - 10.dp) / 2
+                    val pictureWidth = minOf(half, (maxHeight - 16.dp) * 4f / 3f)
                     Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         window(Modifier.width(half).fillMaxHeight())
                         Box(Modifier.width(half).fillMaxHeight().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            val pictureWidth = minOf(half, (maxHeight - 16.dp) * 4f / 3f)
                             MocapPreviewBox(capture, pictureWidth, pictureWidth * 3f / 4f)
                         }
                     }

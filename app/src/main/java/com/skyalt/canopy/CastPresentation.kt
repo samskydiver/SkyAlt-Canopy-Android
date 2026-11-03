@@ -25,7 +25,7 @@ class CastPresentation(
     private val activity: ComponentActivity,
     display: Display,
     private val engine: SimulatorEngine,
-    private val overlay: @Composable () -> Unit,
+    private val stageContent: @Composable () -> Unit,
 ) : Presentation(activity, display) {
     lateinit var glView: CanopyGLView
         private set
@@ -41,7 +41,7 @@ class CastPresentation(
         glView = CanopyGLView(context, engine, interactive = false)
         val compose = ComposeView(context).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setContent(overlay)
+            setContent(stageContent)
         }
         setContentView(
             FrameLayout(context).apply {
