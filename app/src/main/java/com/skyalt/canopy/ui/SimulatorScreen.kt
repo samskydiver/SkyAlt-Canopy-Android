@@ -1,0 +1,203 @@
+package com.skyalt.canopy.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.skyalt.canopy.sim.CanopyGLView
+import com.skyalt.canopy.sim.FlightStatus
+import com.skyalt.canopy.sim.SimulatorEngine
+import com.skyalt.canopy.sim.UiState
+
+/**
+ * The simulator fills the screen in landscape: the 3D view with the
+ * instruments across the top, a brake toggle on each side and the buttons
+ * along the bottom. Settings slide in from the right; a replay opens the
+ * flight profile beside the 3D view.
+ */
+@Composable
+fun SimulatorScreen(
+    state: UiState,
+    engine: SimulatorEngine,
+    glView: CanopyGLView,
+    settingsOpen: Boolean,
+    onSettingsOpen: (Boolean) -> Unit,
+    onChoosePicture: () -> Unit,
+    editingDropzone: Boolean,
+    onEditDropzone: (Boolean) -> Unit,
+) {
+    var choosingStart by remember { mutableStateOf(false) }
+    var barHeight by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
+    val focus = LocalFocusManager.current
+
+    fun openSettings() {
+        if (!settingsOpen) engine.pause()
+        onSettingsOpen(!settingsOpen)
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val showsProfile = state.replay != null
+            val profileWidth = if (showsProfile) maxWidth / 4 else 0.dp
+            val viewWidth = maxWidth - profileWidth
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.width(viewWidth).fillMaxHeight()) {
+                    AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize())
+                    Hud(state, engine, barHeight, settingsOpen, ::openSettings)
+                }
+                if (showsProfile) {
+                    ProfileColumn(
+                        state, engine,
+                        Modifier.width(profileWidth).fillMaxHeight().padding(top = barHeight)
+                            .windowInsetsPadding(WindowInsets.displayCutout),
+                    )
+                }
+            }
+            InstrumentBar(
+                state,
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .onSizeChanged { barHeight = with(density) { it.height.toDp() } },
+            )
+        }
+
+        // The settings drawer
+        AnimatedVisibility(settingsOpen, enter = fadeIn(), exit = fadeOut()) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)).noRippleClick {
+                focus.clearFocus(); onSettingsOpen(false)
+            })
+        }
+        AnimatedVisibility(
+            settingsOpen,
+            enter = slideInHorizontally { it },
+            exit = slideOutHorizontally { it },
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            BoxWithConstraints {
+                val drawerWidth = minOf(400.dp, maxWidth * 0.48f)
+                Drawer(
+                    title = LocalStrings.current("Settings"),
+                    modifier = Modifier.width(drawerWidth),
+                    onClose = { focus.clearFocus(); onSettingsOpen(false) },
+                ) {
+                    SettingsContent(
+                        state, engine,
+                        onOpenStartPoint = { choosingStart = true },
+                        onChoosePicture = onChoosePicture,
+                        onEditPicture = { onEditDropzone(true) },
+                        onApply = { onSettingsOpen(false) },
+                    )
+                }
+            }
+        }
+
+        if (editingDropzone && state.dropzoneImage != null) {
+            DropzoneEditor(state, engine) { focus.clearFocus(); onEditDropzone(false) }
+        }
+        if (choosingStart) {
+            Box(Modifier.fillMaxSize().imePadding()) {
+                StartPointScreen(state, engine) { choosingStart = false }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Hud(state: UiState, engine: SimulatorEngine, barHeight: androidx.compose.ui.unit.Dp, drawerOpen: Boolean, onOpenSettings: () -> Unit) {
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout)) {
+        Column(Modifier.fillMaxSize()) {
+            Spacer(Modifier.height(barHeight))
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                BrakeControls(state, engine)
+                Box(Modifier.align(Alignment.TopCenter).padding(top = 6.dp)) { ModeChip(state) }
+                Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 10.dp + 56.dp + 10.dp + 8.dp)) {
+                    AltimeterFace(state.display.altitude, state.units)
+                }
+                val showsStart = state.isPaused && !drawerOpen && state.replay == null &&
+                    state.display.status != FlightStatus.Landed && !state.showsLandingCard
+                if (showsStart) {
+                    Box(Modifier.align(Alignment.Center)) { CentreStartButton { engine.togglePause() } }
+                }
+            }
+            Column(
+                Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 6.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ReplayBar(state, engine)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TransportButtons(state, engine)
+                    Spacer(Modifier.weight(1f))
+                    ToolButtons(state, engine, onOpenSettings)
+                }
+            }
+        }
+        val touchdown = state.touchdown
+        if (state.showsLandingCard && touchdown != null) {
+            Box(Modifier.align(Alignment.Center)) { LandingCard(state, touchdown, engine) }
+        }
+    }
+}
+
+/** The drawer's chrome: a heading with a close button over a scrolling column of blocks. */
+@Composable
+fun Drawer(title: String, modifier: Modifier = Modifier, onClose: () -> Unit, content: @Composable () -> Unit) {
+    val p = LocalPalette.current
+    Column(modifier.fillMaxHeight().background(p.background).windowInsetsPadding(WindowInsets.displayCutout)) {
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title.uppercase(), style = displayStyle(15.sp), color = p.muted, letterSpacing = 1.3.sp, modifier = Modifier.weight(1f))
+            Box(
+                Modifier.size(30.dp).background(p.surface2, CircleShape).noRippleClick(onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = LocalStrings.current("Close"), tint = p.foreground, modifier = Modifier.size(16.dp))
+            }
+        }
+        Column(
+            Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).imePadding().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            content()
+        }
+    }
+}
