@@ -12,8 +12,8 @@ android {
         applicationId = "com.skyalt.canopy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
     }
 
     // The upload key comes from the environment in CI (GitHub secrets);
