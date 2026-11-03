@@ -45,7 +45,7 @@ import com.skyalt.canopy.sim.ProAccess
 import com.skyalt.canopy.sim.ProPlan
 import com.skyalt.canopy.sim.SimulatorTrial
 
-private const val PRIVACY_POLICY_URL = "https://alw0bwnpjm.feishu.cn/file/BNE2btHvNoA70DxUCazchN89nFd"
+private const val PRIVACY_POLICY_URL = "https://websams.org/privacy/canopy-simulator/"
 private const val PLAY_TERMS_URL = "https://play.google.com/about/play-terms/"
 
 /**
