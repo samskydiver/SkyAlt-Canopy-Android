@@ -16,6 +16,20 @@ android {
         versionName = "0.2.0"
     }
 
+    // The upload key comes from the environment in CI (GitHub secrets);
+    // without it the release build falls back to the debug key.
+    val uploadKeystore = System.getenv("UPLOAD_KEYSTORE_PATH")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (uploadKeystore != null) {
+            create("upload") {
+                storeFile = uploadKeystore
+                storePassword = System.getenv("UPLOAD_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("UPLOAD_KEY_ALIAS") ?: "upload"
+                keyPassword = System.getenv("UPLOAD_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             // The development build skips the free-session limit.
@@ -25,9 +39,7 @@ android {
             buildConfigField("boolean", "TRIAL_ENFORCED", "true")
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signed with the debug key until a release key is set up, so
-            // the APK installs for testing.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
