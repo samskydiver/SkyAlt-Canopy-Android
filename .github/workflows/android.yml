@@ -1,0 +1,40 @@
+name: Android
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Build APKs
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: canopy-simulator-apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+      - name: Publish the APK as a GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then TAG=latest; FLAGS=""; else TAG=preview; FLAGS="--prerelease"; fi
+          cp app/build/outputs/apk/release/app-release.apk CanopySimulator.apk
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" CanopySimulator.apk $FLAGS --title "Canopy Simulator ($GITHUB_REF_NAME)" --notes "Built from ${GITHUB_SHA} on ${GITHUB_REF_NAME}." --target "${GITHUB_SHA}"
+    permissions:
+      contents: write
