@@ -114,7 +114,7 @@ private fun ControlsWindow(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(Modifier.heightIn(max = 130.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.heightIn(max = 170.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(SimIcons.Tv, null, tint = p.foreground, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))

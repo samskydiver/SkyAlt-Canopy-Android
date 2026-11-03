@@ -63,6 +63,15 @@ tap_ui "Cast" || echo "no cast button"
 shot 10-casting 5
 adb shell settings put global overlay_display_devices null
 shot 11-cast-disconnected 3
-adb shell am start -n com.skyalt.canopy/.MainActivity
+# The release build counts launches: the third one shows AltiX Pro.
+if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+  adb install -r app/build/outputs/apk/release/app-release.apk
+  for i in 1 2 3; do
+    adb shell am force-stop com.skyalt.canopy
+    adb shell am start -n com.skyalt.canopy/.MainActivity
+    sleep 8
+  done
+  shot 12-paywall 2
+fi
 adb logcat -d -s AndroidRuntime:E CanopyGL:E '*:F' > screenshots/logcat.txt || true
 adb logcat -d > screenshots/logcat-full.txt || true
