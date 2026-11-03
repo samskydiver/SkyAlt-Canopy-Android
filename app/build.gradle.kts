@@ -11,8 +11,8 @@ android {
         applicationId = "com.skyalt.canopy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.3.2"
+        versionCode = 6
+        versionName = "0.3.3"
     }
 
     // The upload key comes from the environment in CI (GitHub secrets);
@@ -37,6 +37,7 @@ android {
         release {
             buildConfigField("boolean", "TRIAL_ENFORCED", "true")
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
             // Ships the native libraries' symbols in the AAB so Play can read native crashes and ANRs.
