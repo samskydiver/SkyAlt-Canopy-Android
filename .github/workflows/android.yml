@@ -34,7 +34,9 @@ jobs:
         run: |
           if [ "${GITHUB_REF_NAME}" = "main" ]; then TAG=latest; FLAGS=""; else TAG=preview; FLAGS="--prerelease"; fi
           cp app/build/outputs/apk/release/app-release.apk CanopySimulator.apk
+          # The development build: no free-session limit, for testing.
+          cp app/build/outputs/apk/debug/app-debug.apk CanopySimulator-dev.apk
           gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" CanopySimulator.apk $FLAGS --title "Canopy Simulator ($GITHUB_REF_NAME)" --notes "Built from ${GITHUB_SHA} on ${GITHUB_REF_NAME}." --target "${GITHUB_SHA}"
+          gh release create "$TAG" CanopySimulator.apk CanopySimulator-dev.apk $FLAGS --title "Canopy Simulator ($GITHUB_REF_NAME)" --notes "Built from ${GITHUB_SHA} on ${GITHUB_REF_NAME}." --target "${GITHUB_SHA}"
     permissions:
       contents: write

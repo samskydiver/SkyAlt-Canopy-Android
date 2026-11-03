@@ -31,7 +31,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front emulated
           disable-animations: true
           script: bash scripts/emulator-screenshots.sh
       - uses: actions/upload-artifact@v4
