@@ -6,14 +6,14 @@ plugins {
 
 android {
     namespace = "com.skyalt.canopy"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.skyalt.canopy"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        targetSdk = 36
+        versionCode = 3
+        versionName = "0.3.0"
     }
 
     // The upload key comes from the environment in CI (GitHub secrets);
@@ -40,6 +40,8 @@ android {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
+            // Ships the native libraries' symbols in the AAB so Play can read native crashes and ANRs.
+            ndk { debugSymbolLevel = "SYMBOL_TABLE" }
         }
     }
     compileOptions {
@@ -72,7 +74,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$camerax")
     implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
     // AltiX Pro on Google Play, and the free-session count kept with the Google account.
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
     implementation("com.google.android.gms:play-services-auth-blockstore:16.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     testImplementation("junit:junit:4.13.2")
