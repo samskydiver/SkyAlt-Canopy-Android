@@ -16,7 +16,7 @@ import javax.microedition.khronos.opengles.GL10
  * zooms.
  */
 @SuppressLint("ViewConstructor")
-class CanopyGLView(context: Context, private val engine: SimulatorEngine) : GLSurfaceView(context) {
+class CanopyGLView(context: Context, private val engine: SimulatorEngine, private val interactive: Boolean = true) : GLSurfaceView(context) {
     private var lastX = 0f
     private var lastY = 0f
     private var dragging = false
@@ -59,6 +59,7 @@ class CanopyGLView(context: Context, private val engine: SimulatorEngine) : GLSu
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!interactive) return false
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {

@@ -55,6 +55,7 @@ fun SettingsContent(
     onChoosePicture: () -> Unit,
     onEditPicture: () -> Unit,
     onApply: () -> Unit,
+    pictureLocked: Boolean = false,
 ) {
     val s = LocalStrings.current
     val p = LocalPalette.current
@@ -89,7 +90,9 @@ fun SettingsContent(
                     Text(s("No image").uppercase(), style = displayStyle(10.sp), color = p.muted, modifier = Modifier.padding(4.dp))
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (pictureLocked) {
+                Note(s("The dropzone picture is set up on the phone's own screen. Stop casting to change it."))
+            } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ChipButton(s("Choose picture"), onClick = onChoosePicture)
                 if (state.dropzoneImage != null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

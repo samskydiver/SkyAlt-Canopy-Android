@@ -212,20 +212,20 @@ fun AltimeterFace(altitudeMeters: Double, units: Units) {
  * the track; lifting it lets the toggle spring back up.
  */
 @Composable
-fun BrakeControls(state: UiState, engine: SimulatorEngine, modifier: Modifier = Modifier) {
+fun BrakeControls(state: UiState, engine: SimulatorEngine, modifier: Modifier = Modifier, visualOpacity: Float = 0.3f) {
     val interactive = state.replay == null
     BoxWithConstraints(modifier.fillMaxSize()) {
         val trackHeight = maxOf(80.dp, maxHeight - 78.dp)
         Row(Modifier.fillMaxSize()) {
-            BrakeColumn(true, state, trackHeight, interactive) { engine.setBrakeTarget(left = it) }
+            BrakeColumn(true, state, trackHeight, interactive, visualOpacity) { engine.setBrakeTarget(left = it) }
             Spacer(Modifier.weight(1f))
-            BrakeColumn(false, state, trackHeight, interactive) { engine.setBrakeTarget(right = it) }
+            BrakeColumn(false, state, trackHeight, interactive, visualOpacity) { engine.setBrakeTarget(right = it) }
         }
     }
 }
 
 @Composable
-private fun BrakeColumn(left: Boolean, state: UiState, trackHeight: Dp, interactive: Boolean, onTarget: (Double) -> Unit) {
+private fun BrakeColumn(left: Boolean, state: UiState, trackHeight: Dp, interactive: Boolean, visualOpacity: Float, onTarget: (Double) -> Unit) {
     val p = LocalPalette.current
     val s = LocalStrings.current
     val d = state.display
@@ -259,7 +259,7 @@ private fun BrakeColumn(left: Boolean, state: UiState, trackHeight: Dp, interact
         contentAlignment = if (left) Alignment.CenterStart else Alignment.CenterEnd,
     ) {
         Column(
-            Modifier.padding(start = if (left) 10.dp else 0.dp, end = if (left) 0.dp else 10.dp).alpha(0.3f),
+            Modifier.padding(start = if (left) 10.dp else 0.dp, end = if (left) 0.dp else 10.dp).alpha(visualOpacity),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(s(if (left) "Left toggle" else "Right toggle").uppercase(), style = displayStyle(13.sp), color = color, modifier = Modifier.chipBackground())
@@ -319,7 +319,7 @@ private fun BrakeColumn(left: Boolean, state: UiState, trackHeight: Dp, interact
 
 /** Start or pause, reset and replay. */
 @Composable
-fun TransportButtons(state: UiState, engine: SimulatorEngine) {
+fun TransportButtons(state: UiState, engine: SimulatorEngine, iconOnly: Boolean = false) {
     val s = LocalStrings.current
     val landed = state.display.status == FlightStatus.Landed
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -328,19 +328,32 @@ fun TransportButtons(state: UiState, engine: SimulatorEngine) {
             style = ChipStyle.VIEWPORT,
             isOn = state.isPaused,
             isDisabled = state.replay != null || landed,
-            icon = if (state.isPaused || landed) Icons.Filled.PlayArrow else null,
+            icon = if (state.isPaused || landed) Icons.Filled.PlayArrow else if (iconOnly) SimIcons.Pause else null,
             fontSize = 12,
+            iconOnly = iconOnly,
         ) { engine.togglePause() }
-        ChipButton(s("Reset"), style = ChipStyle.VIEWPORT, icon = Icons.Filled.Refresh, fontSize = 12) { engine.resetRun() }
-        ChipButton(s("Replay"), style = ChipStyle.VIEWPORT, isOn = state.replay != null, isDisabled = !state.canReplay, fontSize = 12) {
+        ChipButton(s("Reset"), style = ChipStyle.VIEWPORT, icon = Icons.Filled.Refresh, fontSize = 12, iconOnly = iconOnly) { engine.resetRun() }
+        ChipButton(
+            s("Replay"), style = ChipStyle.VIEWPORT, isOn = state.replay != null, isDisabled = !state.canReplay, fontSize = 12,
+            icon = if (iconOnly) SimIcons.Replay else null, iconOnly = iconOnly,
+        ) {
             if (state.replay != null) engine.exitReplay() else engine.enterReplay()
         }
     }
 }
 
-/** The view and settings buttons. */
+/** The view, motion capture, cast and settings buttons. */
 @Composable
-fun ToolButtons(state: UiState, engine: SimulatorEngine, onOpenSettings: () -> Unit) {
+fun ToolButtons(
+    state: UiState,
+    engine: SimulatorEngine,
+    isCapturing: Boolean,
+    isCasting: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenMotionCapture: () -> Unit,
+    onToggleCast: () -> Unit,
+    iconOnly: Boolean = false,
+) {
     val s = LocalStrings.current
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         val title = when (state.cameraPreset) {
@@ -351,8 +364,13 @@ fun ToolButtons(state: UiState, engine: SimulatorEngine, onOpenSettings: () -> U
             CameraPreset.FIRST_PERSON -> s("First person")
             null -> s("Free view")
         }
-        ChipButton(title, style = ChipStyle.VIEWPORT, fontSize = 12) { engine.cycleCameraPreset() }
-        ChipButton(s("Settings"), style = ChipStyle.VIEWPORT, icon = Icons.Filled.Settings, fontSize = 12, onClick = onOpenSettings)
+        ChipButton(title, style = ChipStyle.VIEWPORT, icon = SimIcons.Videocam, fontSize = 12, iconOnly = iconOnly) { engine.cycleCameraPreset() }
+        ChipButton(s("Motion capture"), style = ChipStyle.VIEWPORT, isOn = isCapturing, icon = SimIcons.Figure, fontSize = 12, iconOnly = iconOnly, onClick = onOpenMotionCapture)
+        ChipButton(
+            if (isCasting) s("Stop casting") else s("Cast"), style = ChipStyle.VIEWPORT, isOn = isCasting, icon = SimIcons.Tv,
+            fontSize = 12, iconOnly = iconOnly, onClick = onToggleCast,
+        )
+        ChipButton(s("Settings"), style = ChipStyle.VIEWPORT, icon = Icons.Filled.Settings, fontSize = 12, iconOnly = iconOnly, onClick = onOpenSettings)
     }
 }
 

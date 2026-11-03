@@ -12,12 +12,17 @@ android {
         applicationId = "com.skyalt.canopy"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
     }
 
     buildTypes {
+        debug {
+            // The development build skips the free-session limit.
+            buildConfigField("boolean", "TRIAL_ENFORCED", "false")
+        }
         release {
+            buildConfigField("boolean", "TRIAL_ENFORCED", "true")
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Signed with the debug key until a release key is set up, so
@@ -34,6 +39,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -47,5 +53,15 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    // Motion capture: the front camera and ML Kit's body pose.
+    val camerax = "1.4.1"
+    implementation("androidx.camera:camera-core:$camerax")
+    implementation("androidx.camera:camera-camera2:$camerax")
+    implementation("androidx.camera:camera-lifecycle:$camerax")
+    implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
+    // AltiX Pro on Google Play, and the free-session count kept with the Google account.
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.google.android.gms:play-services-auth-blockstore:16.4.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     testImplementation("junit:junit:4.13.2")
 }

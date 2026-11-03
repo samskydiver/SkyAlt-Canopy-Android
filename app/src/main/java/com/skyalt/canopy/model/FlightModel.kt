@@ -414,7 +414,16 @@ class BrakeInputs {
     var handSpeed = 2.0
     var releaseSpeed = 4.0
 
-    fun update(dt: Double) {
+    /** [capture] holds the motion-capture pulls (left, right) while the arms fly the canopy. */
+    fun update(dt: Double, capture: Pair<Double, Double>? = null) {
+        if (capture != null) {
+            targetLeft = capture.first
+            targetRight = capture.second
+            val k = 1 - kotlin.math.exp(-dt / 0.09)
+            left += (capture.first - left) * k
+            right += (capture.second - right) * k
+            return
+        }
         val step = handSpeed * dt
         val releaseStep = max(handSpeed, releaseSpeed) * dt
         left += (targetLeft - left).clamp(-releaseStep, step)

@@ -122,6 +122,9 @@ interface SimulatorStore {
 class SimulatorEngine(private val store: SimulatorStore, private val publish: (UiState) -> Unit) {
     val scene = SceneController()
 
+    /** Motion capture, when the arms fly the canopy; set once by the activity. */
+    @Volatile var motionInput: MotionInput? = null
+
     private var configuration = store.loadConfiguration()
     private var units = store.loadUnits()
     private var pathStyle = store.loadPathStyle()
@@ -190,6 +193,12 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         for (command in sceneCommands) command(scene)
         sceneCommands.clear()
 
+        val mocap = motionInput
+        val capturing = mocap != null && mocap.isActive
+        mocap?.fullBrakeDepth = configuration.motionCaptureFullBrakeDepth
+        scene.headLookX = if (capturing) mocap!!.headLookX else 0.0
+        scene.headLookY = if (capturing) mocap!!.headLookY else 0.0
+
         simulate(dt)
         val r = replay
         val frame = if (r != null && recording.isNotEmpty()) {
@@ -223,7 +232,8 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         while (remaining > 0) {
             val h = min(SimConstants.PHYSICS_STEP, remaining)
             remaining -= h
-            inputs.update(h)
+            val mocap = motionInput
+            inputs.update(h, if (mocap != null && mocap.isActive && mocap.isTracked) mocap.leftPull to mocap.rightPull else null)
             state.step(h, inputs.left, inputs.right, aero, wind, configuration.studentMode)
             profileAccumulator += h
             recordingAccumulator += h
