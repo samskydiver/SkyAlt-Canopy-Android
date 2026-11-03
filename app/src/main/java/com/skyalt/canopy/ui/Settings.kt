@@ -46,11 +46,12 @@ import com.skyalt.canopy.sim.UiState
 import java.util.Locale
 import kotlin.math.hypot
 
-/** The settings drawer: flight setup, units, camera, path styles and the dropzone picture. */
+/** The settings drawer: flight setup, language, units, camera, path styles and the dropzone picture. */
 @Composable
 fun SettingsContent(
     state: UiState,
     engine: SimulatorEngine,
+    language: LanguageSetting,
     onOpenStartPoint: () -> Unit,
     onChoosePicture: () -> Unit,
     onEditPicture: () -> Unit,
@@ -60,6 +61,15 @@ fun SettingsContent(
     val s = LocalStrings.current
     val p = LocalPalette.current
     SetupPanel(state, engine, onOpenStartPoint, onApply)
+    Block(s("Language")) {
+        // Each language is named in itself, so the way back is readable whichever is on.
+        SegmentedButtons(
+            AppLanguage.entries,
+            { when (it) { AppLanguage.SYSTEM -> s("System"); AppLanguage.CHINESE -> "简体中文"; AppLanguage.ENGLISH -> "English" } },
+            language.value,
+            { language.select(it) },
+        )
+    }
     Block(s("Units")) {
         SegmentedButtons(Units.entries, { if (it == Units.METRIC) "m/s · m" else "mph · ft" }, state.units, { engine.setUnits(it) })
     }

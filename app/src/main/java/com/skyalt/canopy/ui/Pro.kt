@@ -80,10 +80,10 @@ fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)
                     Text(s("Free sessions used up. Subscribe to AltiX Pro to keep flying."), fontSize = 15.sp, color = p.foreground, textAlign = TextAlign.Center)
                 }
                 Card {
-                    Text(s("Canopy Simulator"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
+                    Text("AltiX Skydiving", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
                     Text(s("Fly the 3D canopy simulator as often as you like."), fontSize = 13.sp, color = p.muted)
                     Spacer(Modifier.width(4.dp))
-                    for (benefit in listOf("Unlimited Canopy Simulator sessions", "Motion capture and casting to a TV", "All future simulator updates")) {
+                    for (benefit in listOf("Unlimited simulator sessions", "Motion capture and casting to a TV", "All future simulator updates")) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Filled.CheckCircle, null, tint = p.good, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))

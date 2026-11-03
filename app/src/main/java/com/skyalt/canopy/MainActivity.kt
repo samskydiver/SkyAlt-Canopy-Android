@@ -43,6 +43,7 @@ import com.skyalt.canopy.sim.SimulatorEngine
 import com.skyalt.canopy.sim.SimulatorTrial
 import com.skyalt.canopy.sim.UiState
 import com.skyalt.canopy.ui.ExternalStage
+import com.skyalt.canopy.ui.LanguageSetting
 import com.skyalt.canopy.ui.LocalPalette
 import com.skyalt.canopy.ui.Palette
 import com.skyalt.canopy.ui.ProUpgradeScreen
@@ -73,6 +74,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var cast: CastController
     private lateinit var pro: ProAccess
     private lateinit var trial: SimulatorTrial
+    private lateinit var language: LanguageSetting
     private var presentation: CastPresentation? = null
     private val background = Executors.newSingleThreadExecutor()
 
@@ -120,6 +122,7 @@ class MainActivity : ComponentActivity() {
         pro = ProAccess(this)
         pro.start()
         trial = SimulatorTrial(this)
+        language = LanguageSetting(this)
         // A visit begins at the setup, with the run waiting for Play.
         engine.pause()
         openGate(isFreshLaunch = savedInstanceState == null)
@@ -131,6 +134,7 @@ class MainActivity : ComponentActivity() {
             pro = pro,
             trial = trial,
             trialEnforced = BuildConfig.TRIAL_ENFORCED,
+            language = language,
             onChoosePicture = { pickPicture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onToggleCamera = ::toggleCamera,
             onOpenAppSettings = {
@@ -146,7 +150,7 @@ class MainActivity : ComponentActivity() {
         )
 
         setContent {
-            val chinese = LocalConfiguration.current.locales[0].language.startsWith("zh")
+            val chinese = language.value.isChinese(LocalConfiguration.current.locales[0])
             val strings = Strings(chinese)
             val palette = if (isSystemInDarkTheme()) Palette.dark else Palette.light
             LaunchedEffect(chinese) { engine.setLegLabels(strings("downwind"), strings("base"), strings("final")) }

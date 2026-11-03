@@ -64,6 +64,7 @@ class SimulatorHost(
     val pro: ProAccess,
     val trial: SimulatorTrial,
     val trialEnforced: Boolean,
+    val language: LanguageSetting,
     val onChoosePicture: () -> Unit,
     val onToggleCamera: () -> Unit,
     val onOpenAppSettings: () -> Unit,
@@ -175,6 +176,7 @@ fun SimulatorScreen(
                             ProBlock(host.pro, host.trial, host.trialEnforced) { showingPro = true }
                             SettingsContent(
                                 state, engine,
+                                language = host.language,
                                 onOpenStartPoint = { choosingStart = true },
                                 onChoosePicture = host.onChoosePicture,
                                 onEditPicture = { onEditDropzone(true) },
@@ -245,7 +247,7 @@ private fun Hud(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TransportButtons(state, engine)
                     Spacer(Modifier.weight(1f))
-                    ToolButtons(state, engine, capture.active, false, onOpenSettings, onOpenMotionCapture, onCast, iconOnly = compactTools)
+                    ToolButtons(state, engine, capture.active, false, onOpenSettings, onOpenMotionCapture, onCast, stacked = compactTools)
                 }
             }
         }

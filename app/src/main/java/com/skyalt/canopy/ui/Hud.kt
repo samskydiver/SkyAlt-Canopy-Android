@@ -342,7 +342,7 @@ fun TransportButtons(state: UiState, engine: SimulatorEngine, iconOnly: Boolean 
     }
 }
 
-/** The view, motion capture, cast and settings buttons. */
+/** The view, motion capture, cast and settings buttons; [stacked] puts each name under its icon where space is short. */
 @Composable
 fun ToolButtons(
     state: UiState,
@@ -352,7 +352,7 @@ fun ToolButtons(
     onOpenSettings: () -> Unit,
     onOpenMotionCapture: () -> Unit,
     onToggleCast: () -> Unit,
-    iconOnly: Boolean = false,
+    stacked: Boolean = false,
 ) {
     val s = LocalStrings.current
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -364,13 +364,13 @@ fun ToolButtons(
             CameraPreset.FIRST_PERSON -> s("First person")
             null -> s("Free view")
         }
-        ChipButton(title, style = ChipStyle.VIEWPORT, icon = SimIcons.Videocam, fontSize = 12, iconOnly = iconOnly) { engine.cycleCameraPreset() }
-        ChipButton(s("Motion capture"), style = ChipStyle.VIEWPORT, isOn = isCapturing, icon = SimIcons.Figure, fontSize = 12, iconOnly = iconOnly, onClick = onOpenMotionCapture)
+        ChipButton(title, style = ChipStyle.VIEWPORT, icon = SimIcons.Videocam, fontSize = 12, stacked = stacked) { engine.cycleCameraPreset() }
+        ChipButton(s("Motion capture"), style = ChipStyle.VIEWPORT, isOn = isCapturing, icon = SimIcons.Figure, fontSize = 12, stacked = stacked, onClick = onOpenMotionCapture)
         ChipButton(
             if (isCasting) s("Stop casting") else s("Cast"), style = ChipStyle.VIEWPORT, isOn = isCasting, icon = SimIcons.Tv,
-            fontSize = 12, iconOnly = iconOnly, onClick = onToggleCast,
+            fontSize = 12, stacked = stacked, onClick = onToggleCast,
         )
-        ChipButton(s("Settings"), style = ChipStyle.VIEWPORT, icon = Icons.Filled.Settings, fontSize = 12, iconOnly = iconOnly, onClick = onOpenSettings)
+        ChipButton(s("Settings"), style = ChipStyle.VIEWPORT, icon = Icons.Filled.Settings, fontSize = 12, stacked = stacked, onClick = onOpenSettings)
     }
 }
 

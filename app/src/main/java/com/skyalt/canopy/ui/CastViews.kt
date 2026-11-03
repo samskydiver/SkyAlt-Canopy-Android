@@ -138,7 +138,7 @@ private fun ControlsWindow(
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             TransportButtons(state, engine, iconOnly = true)
             Spacer(Modifier.weight(1f))
-            ToolButtons(state, engine, capture.active, true, onOpenSettings, onOpenMotionCapture, onStopCasting, iconOnly = true)
+            ToolButtons(state, engine, capture.active, true, onOpenSettings, onOpenMotionCapture, onStopCasting, stacked = true)
         }
         CameraTouchPad(engine, Modifier.fillMaxWidth().weight(1f).heightIn(min = 90.dp))
     }

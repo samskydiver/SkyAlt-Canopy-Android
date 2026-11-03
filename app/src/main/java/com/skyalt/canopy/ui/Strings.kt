@@ -1,6 +1,38 @@
 package com.skyalt.canopy.ui
 
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.util.Locale
+
+/** The interface language chosen in the settings; [SYSTEM] follows the phone. */
+enum class AppLanguage(val key: String) {
+    SYSTEM("system"), CHINESE("zh"), ENGLISH("en");
+
+    fun isChinese(systemLocale: Locale) = when (this) {
+        SYSTEM -> systemLocale.language.startsWith("zh")
+        CHINESE -> true
+        ENGLISH -> false
+    }
+}
+
+/** The saved language choice, observable by Compose. */
+class LanguageSetting(context: Context) {
+    private val prefs = context.getSharedPreferences("canopy-simulator", Context.MODE_PRIVATE)
+
+    var value by mutableStateOf(AppLanguage.entries.firstOrNull { it.key == prefs.getString(KEY, null) } ?: AppLanguage.SYSTEM)
+        private set
+
+    fun select(language: AppLanguage) {
+        value = language
+        prefs.edit().putString(KEY, language.key).apply()
+    }
+
+    private companion object {
+        const val KEY = "language"
+    }
+}
 
 /**
  * The simulator's strings, keyed by their English text as on iOS, with the
@@ -192,13 +224,12 @@ class Strings(val chinese: Boolean) {
         "down" to "下沉",
         "Language" to "语言",
         "System" to "跟随系统",
-        "Canopy Simulator" to "伞控模拟器",
         "Hold to brake" to "按住拉刹",
         "Dropzone" to "降落场",
         "AltiX Pro" to "AltiX Pro",
         "AltiX Pro Active" to "AltiX Pro 已生效",
         "Fly the 3D canopy simulator as often as you like." to "不限次数使用 3D 伞控模拟器。",
-        "Unlimited Canopy Simulator sessions" to "不限次数使用伞控模拟器",
+        "Unlimited simulator sessions" to "不限次数使用模拟器",
         "Motion capture and casting to a TV" to "动作捕捉和投屏到电视",
         "All future simulator updates" to "今后所有模拟器更新",
         "Continue" to "继续",
