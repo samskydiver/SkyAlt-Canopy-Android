@@ -50,11 +50,24 @@ PY
   adb shell input tap $(cat /tmp/xy)
 }
 # Fly on to the ground, then replay the run with its profile.
-shot 06b-landed 75
+shot 06b-landed 100
 tap_ui "REPLAY" || echo "no replay button"
 shot 06c-replay 6
 tap_ui "EXIT REPLAY" || echo "no exit replay"
 sleep 1
+# The settings drawer over a drawn 3D view.
+tap_ui "Settings" || echo "no settings button"
+shot 06d-settings 3
+adb shell input tap $((W / 5)) $((H / 2))
+sleep 1
+# Casting with the toggles, before motion capture.
+adb shell settings put global overlay_display_devices 1280x720/240
+sleep 3
+tap_ui "Cast" || echo "no cast button"
+shot 06e-casting 5
+tap_ui "Stop casting" || echo "no stop casting"
+adb shell settings put global overlay_display_devices null
+sleep 2
 # Motion capture: the drawer, the camera on, then the 3D view with the picture.
 adb shell pm grant com.skyalt.canopy android.permission.CAMERA
 adb shell input keyevent KEYCODE_WAKEUP

@@ -118,7 +118,7 @@ fun SimulatorScreen(
         } else {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val showsProfile = state.replay != null
-                val profileWidth = if (showsProfile) maxWidth / 4 else 0.dp
+                val profileWidth = if (showsProfile) minOf(maxOf(maxWidth / 4, 230.dp), maxWidth / 2) else 0.dp
                 val viewWidth = maxWidth - profileWidth
                 Row(Modifier.fillMaxSize()) {
                     Box(Modifier.width(viewWidth).fillMaxHeight()) {
