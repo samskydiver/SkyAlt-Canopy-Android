@@ -88,7 +88,7 @@ class CanopyGLView(context: Context, private val engine: SimulatorEngine, privat
 }
 
 /** 4× multisampling with a 24-bit depth buffer, falling back to none. */
-private class MultisampleConfigChooser : GLSurfaceView.EGLConfigChooser {
+internal class MultisampleConfigChooser : GLSurfaceView.EGLConfigChooser {
     override fun chooseConfig(egl: EGL10, display: EGLDisplay): EGLConfig {
         val withMsaa = intArrayOf(
             EGL10.EGL_RED_SIZE, 8, EGL10.EGL_GREEN_SIZE, 8, EGL10.EGL_BLUE_SIZE, 8,

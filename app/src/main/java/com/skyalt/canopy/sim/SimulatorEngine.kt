@@ -1,7 +1,24 @@
 package com.skyalt.canopy.sim
 
 import android.graphics.Bitmap
+import com.skyalt.canopy.model.Accident
 import com.skyalt.canopy.model.AeroParameters
+import com.skyalt.canopy.model.Airfield
+import com.skyalt.canopy.model.AircraftFlight
+import com.skyalt.canopy.model.CloudSettings
+import com.skyalt.canopy.model.METERS_PER_FOOT
+import com.skyalt.canopy.model.People
+import com.skyalt.canopy.model.Scenario
+import com.skyalt.canopy.model.SimulatorMode
+import com.skyalt.canopy.model.TrafficFrame
+import com.skyalt.canopy.model.TrafficSettings
+import com.skyalt.canopy.model.TrafficSimulation
+import com.skyalt.canopy.model.TrafficSpawn
+import com.skyalt.canopy.model.TrafficStudentGroup
+import com.skyalt.canopy.model.Vec3
+import com.skyalt.canopy.model.WakeField
+import com.skyalt.canopy.model.WakeProfile
+import com.skyalt.canopy.model.placedStart
 import com.skyalt.canopy.model.BrakeInputs
 import com.skyalt.canopy.model.Compass
 import com.skyalt.canopy.model.DEG
@@ -38,6 +55,12 @@ sealed class FlightStatus {
     data object LeftTurn : FlightStatus()
     data object RightTurn : FlightStatus()
     data class Brakes(val percent: Int) : FlightStatus()
+    /** Wake turbulence shaking the canopy. */
+    data object Turbulence : FlightStatus()
+    /** The wake has collapsed part of the canopy. */
+    data object WakeCollapse : FlightStatus()
+    /** A collision: the run is over. */
+    data object Collision : FlightStatus()
 }
 
 /** The instruments, refreshed ten times a second. */
@@ -90,7 +113,17 @@ data class UiState(
     val pathStyle: PathStyleSettings = PathStyleSettings(),
     val startPlacement: StartPlacement? = null,
     val referencePattern: PatternGeometry? = null,
-)
+    /** Free practice with the saved setup, or a scene with its own. */
+    val mode: SimulatorMode = SimulatorMode.Free,
+    val clouds: CloudSettings = CloudSettings(),
+    val traffic: TrafficSettings = TrafficSettings(),
+    /** Set when the run ended in a collision; the accident card shows it. */
+    val accident: Accident? = null,
+    /** The switch for an aircraft landing on the runway. */
+    val aircraftLanding: Boolean = false,
+) {
+    val scenario: Scenario? get() = mode.scenario
+}
 
 /** Where the engine keeps what outlives a visit. */
 interface SimulatorStore {
@@ -109,6 +142,10 @@ interface SimulatorStore {
     fun saveAutoFirstPerson(on: Boolean)
     fun loadFirstPersonAltitude(): Double?
     fun saveFirstPersonAltitude(m: Double)
+    fun loadClouds(): CloudSettings
+    fun saveClouds(c: CloudSettings)
+    fun loadTraffic(): TrafficSettings
+    fun saveTraffic(t: TrafficSettings)
 }
 
 /**
@@ -134,6 +171,15 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     private var firstPersonAltitude = (store.loadFirstPersonAltitude() ?: SceneController.DEFAULT_FIRST_PERSON_ALTITUDE)
         .coerceIn(SceneController.FIRST_PERSON_MIN, SceneController.FIRST_PERSON_MAX)
     private var legLabels = Triple("downwind", "base", "final")
+    private var mode: SimulatorMode = SimulatorMode.Free
+    private var clouds = store.loadClouds()
+    private var traffic = store.loadTraffic()
+    private var accident: Accident? = null
+    /** Kept with the traffic settings in free practice, off on entering a scene; the aircraft scene always has one. */
+    private var aircraftLanding = traffic.aircraftLanding
+    private val scenario get() = mode.scenario
+    /** The setting, except in a scene that keeps the outside view. */
+    private val firstPersonIsAutomatic get() = autoFirstPerson && scenario?.allowsAutomaticFirstPerson != false
 
     private var aero = AeroParameters(configuration.performance)
     private var state = FlightState(configuration, aero)
@@ -155,9 +201,23 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     private var cameraPreset: CameraPreset? = CameraPreset.CHASE
     private var display = Display()
 
+    // The computer-flown canopies, their 30 Hz recording for the replay, the
+    // wakes everything leaves, the run clock they share and the turbulence
+    // the jumper's canopy is in; the scenes' aircraft and people.
+    private var npcs = TrafficSimulation()
+    private var trafficAccumulator = 0.0
+    private val trafficSnapshots = ArrayList<List<TrafficFrame>>()
+    private val wakeField = WakeField()
+    private var runClock = 0.0
+    private var playerTurbulence = 0.0
+    private var aircraft: AircraftFlight? = null
+    private var people: List<Vec3> = emptyList()
+
     private val sceneCommands = ArrayList<(SceneController) -> Unit>()
 
     init {
+        aircraft = freeAircraft()
+        regenerateTraffic()
         queueSceneSetup()
         display = computeDisplay(currentFrame())
     }
@@ -172,13 +232,28 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         val fp = firstPersonAltitude
         val labels = legLabels
         val a = aero
+        val cloudLayer = clouds
+        val wakes = traffic.showsWakes
+        val airfield = scenario != null
+        val hasAircraft = aircraft != null
+        val paths = scenario?.showsPaths ?: true
+        val crowd = people
+        val appearances = npcs.appearances
+        val autoFirst = firstPersonIsAutomatic
         sceneCommands += { s ->
             s.applyPathStyle(style)
             s.rebuildPattern(config, a, labels)
             s.setCanopySize(config.canopyAreaSquareFeet)
-            s.isFirstPersonAutomatic = auto
+            s.isFirstPersonAutomatic = autoFirst && auto
             s.firstPersonAltitude = fp
             s.setDropzone(image, dz)
+            s.setClouds(cloudLayer)
+            s.showsWakes = wakes
+            s.setAirfield(airfield)
+            s.setAircraft(hasAircraft)
+            s.showsPaths = paths
+            s.setPeople(crowd)
+            s.setTraffic(appearances)
         }
     }
 
@@ -214,6 +289,9 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         } else currentFrame()
 
         scene.update(frame, dt)
+        scene.updateTraffic(if (replay != null) replayTrafficFrames(replayTime) else npcs.frames)
+        scene.updateWakes(wakeField.samples, runClock)
+        aircraft?.let { scene.updateAircraft(it.state(frame.time)) }
         if (!isPaused && !state.landed && replay == null) {
             scene.appendTrailPoint(state.position, -state.velocity.y, dt)
         }
@@ -226,7 +304,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     }
 
     private fun simulate(frameDt: Double) {
-        if (isPaused || state.landed || replay != null) return
+        if (isPaused || state.landed || state.accident || replay != null) return
         val wind = currentWind
         var remaining = frameDt
         while (remaining > 0) {
@@ -234,7 +312,14 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             remaining -= h
             val mocap = motionInput
             inputs.update(h, if (mocap != null && mocap.isActive && mocap.isTracked) mocap.leftPull to mocap.rightPull else null)
-            state.step(h, inputs.left, inputs.right, aero, wind, configuration.studentMode)
+            state.step(h, inputs.left, inputs.right, aero, wind, configuration.studentMode, playerTurbulence)
+            runClock += h
+            // The other canopies fly at 60 Hz alongside.
+            trafficAccumulator += h
+            while (trafficAccumulator >= TrafficSimulation.STEP_INTERVAL) {
+                trafficAccumulator -= TrafficSimulation.STEP_INTERVAL
+                npcs.step(TrafficSimulation.STEP_INTERVAL, wind)
+            }
             profileAccumulator += h
             recordingAccumulator += h
             if (recordingAccumulator >= SimConstants.RECORDING_INTERVAL) {
@@ -258,10 +343,234 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
                 break
             }
         }
+        updateAir()
+    }
+
+    /**
+     * Once a frame: the wakes everything leaves, the turbulence the jumper's
+     * canopy is flying through, and whether it has hit something.
+     */
+    private fun updateAir() {
+        if (state.landed || state.accident) return
+        val time = runClock
+        wakeField.prune(time)
+        val centre = state.canopyCentre
+        val wind = currentWind
+        // The jumper's own wake troubles no one and is not drawn, so it is not kept.
+        for (other in npcs.canopies) {
+            if (!other.isFlying) continue
+            wakeField.emit(
+                other.id, other.canopyCentre, WakeProfile.canopy(other.span),
+                WakeProfile.strengthScale(other.performance.wingLoading), wind, time,
+            )
+        }
+        // An aircraft that has taxied off leaves nothing to fly into.
+        val aircraftState = aircraft?.state(time)?.takeIf { it.isPresent }
+        if (aircraftState != null) {
+            wakeField.emit(WakeField.AIRCRAFT_SOURCE, aircraftState.position, WakeProfile.AIRCRAFT, if (aircraftState.onGround) 0.3 else 1.0, wind, time)
+        }
+        playerTurbulence = wakeField.intensity(centre, time, WakeField.PLAYER_SOURCE)
+
+        val radius = TrafficSimulation.canopyRadius(configuration.canopyAreaSquareFeet)
+        val body = state.position
+        if (npcs.collides(centre, radius, body)) return endInAccident(Accident.Kind.CANOPY)
+        if (aircraftState != null) {
+            for ((sphere, r) in aircraftState.collisionSpheres) {
+                if ((centre - sphere).length < radius + r || (body - sphere).length < 1 + r) return endInAccident(Accident.Kind.AIRCRAFT)
+            }
+        }
+        if (people.isNotEmpty() && People.touches(people, body)) return endInAccident(Accident.Kind.PERSON)
+        if (scenario != null && (Airfield.hangarTouches(centre, radius) || Airfield.hangarTouches(body, 1.0))) {
+            endInAccident(Accident.Kind.BUILDING)
+        }
+    }
+
+    /** A collision ends the run where it is: the flight freezes and the accident card takes the landing card's place. */
+    private fun endInAccident(kind: Accident.Kind) {
+        state.accident = true
+        accident = Accident(kind, state.time, kotlin.math.max(0.0, state.position.y - 1))
+        showsLandingCard = false
+        record()
+        display = computeDisplay(currentFrame())
+        publishLocked()
+    }
+
+    /**
+     * The other canopies, and the scene's people, at each reset. In free
+     * practice the traffic setting's canopies go in the air around the
+     * pattern's entry, above and below the jumper's start; the traffic scene
+     * opens twenty around the jumper, six of them students at the jumper's
+     * level; the aircraft and crosswind scenes take the setting; the other
+     * scenes fly alone.
+     */
+    private fun regenerateTraffic() {
+        val wind = currentWind
+        wakeField.removeAll()
+        runClock = 0.0
+        trafficAccumulator = 0.0
+        playerTurbulence = 0.0
+        trafficSnapshots.clear()
+        people = if (scenario?.hasPeople == true) People.obstacleCrowd() else emptyList()
+        // The trail the aircraft has already left: the aircraft scene opens with the jumper in it.
+        aircraft?.let { flight ->
+            val profile = WakeProfile.AIRCRAFT
+            var born = -AircraftFlight.TRAIL_SECONDS_AT_START
+            while (born < 0) {
+                val passed = flight.state(born)
+                if (passed.isPresent && !passed.onGround) {
+                    wakeField.seed(WakeField.AIRCRAFT_SOURCE, passed.position, profile, 1.0, wind, born)
+                }
+                born += profile.interval
+            }
+        }
+        val entry = configuration.patternGeometry(aero).points[0]
+        fun aroundEntry(low: Double, high: Double) = TrafficSpawn(entry, 200.0..700.0, low..high)
+        npcs = when (scenario) {
+            null -> {
+                val start = configuration.startAltitudeMeters
+                val low = kotlin.math.max(150.0, 0.8 * start)
+                val high = kotlin.math.max(low + 10, kotlin.math.min(1_500.0, 1.4 * start))
+                TrafficSimulation.generate(traffic.count, configuration, wind, aroundEntry(low, high))
+            }
+            Scenario.TRAFFIC -> {
+                val start = configuration.start(aero).position
+                val altitude = start.y - 1
+                val radius = 1_000 * METERS_PER_FOOT
+                TrafficSimulation.generate(
+                    20, configuration, wind,
+                    TrafficSpawn(start, 0.0..radius, kotlin.math.max(20.0, altitude - radius)..(altitude + radius)),
+                    students = TrafficStudentGroup(6, 0.6..1.0, altitude),
+                )
+            }
+            Scenario.AIRCRAFT, Scenario.CROSSWIND -> TrafficSimulation.generate(traffic.count, configuration, wind, aroundEntry(150.0, 450.0))
+            Scenario.DOWNWIND, Scenario.OBSTACLES -> TrafficSimulation()
+        }
+        val crowd = people
+        val appearances = npcs.appearances
+        sceneCommands += { it.setPeople(crowd); it.setTraffic(appearances) }
+    }
+
+    /** The other canopies as recorded alongside the jumper's frames. */
+    private fun replayTrafficFrames(time: Double): List<TrafficFrame> {
+        if (trafficSnapshots.size != recording.size || recording.isEmpty()) return npcs.frames
+        if (time <= recording.first().time) return trafficSnapshots.first()
+        if (time >= recording.last().time) return trafficSnapshots.last()
+        var low = 0
+        var high = recording.size - 1
+        while (high - low > 1) {
+            val middle = (low + high) / 2
+            if (recording[middle].time <= time) low = middle else high = middle
+        }
+        val u = (time - recording[low].time) / kotlin.math.max(1e-6, recording[high].time - recording[low].time)
+        return TrafficFrame.interpolated(trafficSnapshots[low], trafficSnapshots[high], u)
+    }
+
+    // MARK: - Modes
+
+    /**
+     * Free practice or a scene. A scene brings its own setup, airfield,
+     * traffic, aircraft or people, and starts over, waiting for Play; free
+     * practice goes back to the saved setup. Choosing the scene being flown
+     * starts it over.
+     */
+    fun enter(newMode: SimulatorMode) = mutate {
+        if (replay != null) exitReplayLocked()
+        if (newMode == mode && newMode == SimulatorMode.Free) return@mutate
+        mode = newMode
+        val chosen = newMode.scenario
+        if (chosen == null) {
+            configuration = store.loadConfiguration()
+            aircraftLanding = traffic.aircraftLanding
+        } else {
+            configuration = chosen.configuration.clamped()
+            aircraftLanding = false
+            aircraft = if (chosen.hasAircraft) AircraftFlight.SCENARIO else null
+        }
+        aero = AeroParameters(configuration.performance)
+        if (chosen == null) aircraft = freeAircraft()
+        fullToggleTurnSeconds = FlightState.fullToggleTurnSeconds(configuration, aero)
+        val area = configuration.canopyAreaSquareFeet
+        val airfield = chosen != null
+        val hasAircraft = aircraft != null
+        val paths = chosen?.showsPaths ?: true
+        val autoFirst = firstPersonIsAutomatic
+        sceneCommands += {
+            it.setCanopySize(area)
+            it.setAirfield(airfield)
+            it.setAircraft(hasAircraft)
+            it.showsPaths = paths
+            it.isFirstPersonAutomatic = autoFirst
+        }
+        runs.clear()
+        sceneCommands += { it.clearGhostTrails() }
+        resetLocked(keepPaused = true)
+        isPaused = true
+    }
+
+    /**
+     * The switch: an aircraft landing on the runway, again and again, from
+     * now on; or none. Free practice keeps the choice, and needs the runway
+     * drawn on the dropzone picture first.
+     */
+    fun setAircraftLanding(on: Boolean) = mutate {
+        if (scenario?.choosesAircraft == false || on == aircraftLanding) return@mutate
+        if (mode == SimulatorMode.Free && on && dropzone.runwayGeometry == null) return@mutate
+        aircraftLanding = on
+        if (mode == SimulatorMode.Free && traffic.aircraftLanding != on) {
+            traffic = traffic.copy(aircraftLanding = on)
+            store.saveTraffic(traffic)
+        }
+        aircraft = if (mode == SimulatorMode.Free) freeAircraft() else if (on) AircraftFlight.CIRCUIT else null
+        val visible = aircraft != null
+        sceneCommands += { it.setAircraft(visible) }
+    }
+
+    /** Whether a runway is drawn on the dropzone picture, for the aircraft switch. */
+    fun hasRunway() = synchronized(this) { dropzone.runwayGeometry != null }
+
+    /** Free practice's aircraft: landing on the runway drawn on the dropzone picture while the switch is on. */
+    private fun freeAircraft(): AircraftFlight? {
+        if (mode != SimulatorMode.Free || !aircraftLanding) return null
+        val runway = dropzone.runwayGeometry ?: return null
+        return AircraftFlight.landing(runway, configuration.patternGeometry(aero).finalHeading)
+    }
+
+    /** Free practice's aircraft follows the runway and the landing direction; without a runway the switch goes off. */
+    private fun refreshFreeAircraft() {
+        if (mode != SimulatorMode.Free) return
+        if (aircraftLanding && dropzone.runwayGeometry == null) {
+            aircraftLanding = false
+            traffic = traffic.copy(aircraftLanding = false)
+            store.saveTraffic(traffic)
+        }
+        aircraft = freeAircraft()
+        val visible = aircraft != null
+        sceneCommands += { it.setAircraft(visible) }
+    }
+
+    // MARK: - Clouds and traffic
+
+    fun updateClouds(change: (CloudSettings) -> CloudSettings) = mutate {
+        val updated = change(clouds).clamped()
+        if (updated == clouds) return@mutate
+        clouds = updated
+        store.saveClouds(updated)
+        sceneCommands += { it.setClouds(updated) }
+    }
+
+    /** The count takes effect at the next reset or Apply. */
+    fun updateTraffic(change: (TrafficSettings) -> TrafficSettings) = mutate {
+        val updated = change(traffic).clamped()
+        if (updated == traffic) return@mutate
+        traffic = updated
+        store.saveTraffic(updated)
+        val wakes = updated.showsWakes
+        sceneCommands += { it.showsWakes = wakes }
     }
 
     private fun record() {
         recording.add(currentFrame())
+        trafficSnapshots.add(npcs.frames)
         canReplay = recording.size >= SimConstants.MINIMUM_REPLAY_FRAMES
     }
 
@@ -289,7 +598,11 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             if (runs.size > SimConstants.MAXIMUM_STORED_RUNS) runs.removeAt(0)
             sceneCommands += { it.archiveTrail() }
         }
+        // A scene's start follows the wind of the moment, and free practice's aircraft the landing direction.
+        scenario?.let { configuration = configuration.placedStart(it).clamped() }
+        refreshFreeAircraft()
         state = FlightState(configuration, aero)
+        accident = null
         currentProfile = ArrayList()
         profileAccumulator = 0.0
         touchdown = null
@@ -302,6 +615,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         val a = aero
         val labels = legLabels
         sceneCommands += { it.resetTrail(); it.rebuildPattern(config, a, labels) }
+        regenerateTraffic()
         if (isPaused && !keepPaused) isPaused = false
         display = computeDisplay(currentFrame())
     }
@@ -366,7 +680,8 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         val windsockMoved = updated.windsockEastMeters != configuration.windsockEastMeters ||
             updated.windsockSouthMeters != configuration.windsockSouthMeters
         configuration = updated
-        store.saveConfiguration(updated)
+        // A scene's setup is its own; only free practice is kept.
+        if (mode == SimulatorMode.Free) store.saveConfiguration(updated)
         if (live) {
             aero = AeroParameters(updated.performance)
             fullToggleTurnSeconds = FlightState.fullToggleTurnSeconds(updated, aero)
@@ -392,7 +707,8 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     fun setAutoFirstPerson(on: Boolean) = mutate {
         autoFirstPerson = on
         store.saveAutoFirstPerson(on)
-        sceneCommands += { it.isFirstPersonAutomatic = on }
+        val automatic = firstPersonIsAutomatic
+        sceneCommands += { it.isFirstPersonAutomatic = automatic }
     }
 
     fun setFirstPersonAltitude(meters: Double) = mutate {
@@ -456,6 +772,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         store.saveDropzone(updated)
         val image = dropzoneImage
         sceneCommands += { it.setDropzone(image, updated) }
+        refreshFreeAircraft()
     }
 
     // MARK: - Path styles
@@ -504,6 +821,11 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
                 pathStyle = pathStyle,
                 startPlacement = configuration.start(aero),
                 referencePattern = configuration.referencePattern.hand?.let { configuration.patternGeometry(aero, it) },
+                mode = mode,
+                clouds = clouds,
+                traffic = traffic,
+                accident = accident,
+                aircraftLanding = aircraftLanding,
             ),
         )
     }
@@ -517,9 +839,12 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         val range = if (sinkRate > 0.05) frame.altitude * groundSpeed / sinkRate else 9999.0
         val status = when {
             replay != null -> FlightStatus.Replay
+            frame.accident -> FlightStatus.Collision
             frame.landed -> FlightStatus.Landed
+            frame.wakeCollapse > 0.3 -> FlightStatus.WakeCollapse
             frame.collapse > 0.02 -> FlightStatus.FullStall
             frame.stall > 0.02 -> FlightStatus.StallOnset
+            frame.turbulence > 0.25 -> FlightStatus.Turbulence
             brake > 0.7 -> FlightStatus.DeepBrakes
             abs(frame.leftBrake - frame.rightBrake) > 0.3 ->
                 if (frame.leftBrake > frame.rightBrake) FlightStatus.LeftTurn else FlightStatus.RightTurn

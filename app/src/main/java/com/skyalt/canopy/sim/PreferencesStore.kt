@@ -4,6 +4,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.skyalt.canopy.model.CanopyType
+import com.skyalt.canopy.model.CloudSettings
+import com.skyalt.canopy.model.RunwayPlacement
+import com.skyalt.canopy.model.TrafficSettings
 import com.skyalt.canopy.model.DropzoneSettings
 import com.skyalt.canopy.model.LineStyle
 import com.skyalt.canopy.model.PathStyleSettings
@@ -43,6 +46,7 @@ class PreferencesStore(context: Context) : SimulatorStore {
             startSouthMeters = if (j.has("startSouthMeters")) j.optDouble("startSouthMeters") else null,
             windsockEastMeters = j.optDouble("windsockEastMeters", d.windsockEastMeters),
             windsockSouthMeters = j.optDouble("windsockSouthMeters", d.windsockSouthMeters),
+            finalHeadingDegrees = if (j.has("finalHeadingDegrees")) j.optDouble("finalHeadingDegrees") else null,
         ).clamped()
     }
 
@@ -65,6 +69,7 @@ class PreferencesStore(context: Context) : SimulatorStore {
             .put("windsockSouthMeters", c.windsockSouthMeters)
         c.startEastMeters?.let { j.put("startEastMeters", it) }
         c.startSouthMeters?.let { j.put("startSouthMeters", it) }
+        c.finalHeadingDegrees?.let { j.put("finalHeadingDegrees", it) }
         prefs.edit().putString("configuration", j.toString()).apply()
     }
 
@@ -106,6 +111,12 @@ class PreferencesStore(context: Context) : SimulatorStore {
             j.optDouble("eastOffsetMeters", d.eastOffsetMeters),
             j.optDouble("southOffsetMeters", d.southOffsetMeters),
             j.optDouble("rotationDegrees", d.rotationDegrees),
+            j.optJSONObject("runway")?.let { r ->
+                RunwayPlacement(
+                    r.optDouble("centreX", 0.0), r.optDouble("centreY", 0.0),
+                    r.optDouble("length", 0.5), r.optDouble("width", 0.06), r.optDouble("angleDegrees", 0.0),
+                )
+            },
         ).clamped()
     }
 
@@ -115,6 +126,13 @@ class PreferencesStore(context: Context) : SimulatorStore {
             .put("eastOffsetMeters", s.eastOffsetMeters)
             .put("southOffsetMeters", s.southOffsetMeters)
             .put("rotationDegrees", s.rotationDegrees)
+        s.runway?.let { r ->
+            j.put(
+                "runway",
+                JSONObject().put("centreX", r.centreX).put("centreY", r.centreY).put("length", r.length)
+                    .put("width", r.width).put("angleDegrees", r.angleDegrees),
+            )
+        }
         prefs.edit().putString("dropzone", j.toString()).apply()
     }
 
@@ -136,6 +154,36 @@ class PreferencesStore(context: Context) : SimulatorStore {
 
     override fun removeDropzoneImage() {
         imageFile.delete()
+    }
+
+    override fun loadClouds(): CloudSettings {
+        val d = CloudSettings()
+        val j = json("clouds") ?: return d
+        return CloudSettings(
+            j.optDouble("baseAltitudeMeters", d.baseAltitudeMeters),
+            j.optDouble("thicknessMeters", d.thicknessMeters),
+            j.optDouble("density", d.density),
+        ).clamped()
+    }
+
+    override fun saveClouds(c: CloudSettings) {
+        val j = JSONObject().put("baseAltitudeMeters", c.baseAltitudeMeters).put("thicknessMeters", c.thicknessMeters).put("density", c.density)
+        prefs.edit().putString("clouds", j.toString()).apply()
+    }
+
+    override fun loadTraffic(): TrafficSettings {
+        val d = TrafficSettings()
+        val j = json("traffic") ?: return d
+        return TrafficSettings(
+            j.optInt("count", d.count),
+            j.optBoolean("showsWakes", d.showsWakes),
+            j.optBoolean("aircraftLanding", d.aircraftLanding),
+        ).clamped()
+    }
+
+    override fun saveTraffic(t: TrafficSettings) {
+        val j = JSONObject().put("count", t.count).put("showsWakes", t.showsWakes).put("aircraftLanding", t.aircraftLanding)
+        prefs.edit().putString("traffic", j.toString()).apply()
     }
 
     override fun loadAutoFirstPerson() = prefs.getBoolean("auto-first-person", true)

@@ -9,6 +9,12 @@ import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.Matrix
 import com.skyalt.canopy.model.AeroParameters
+import com.skyalt.canopy.model.AircraftState
+import com.skyalt.canopy.model.CloudSettings
+import com.skyalt.canopy.model.TrafficAppearance
+import com.skyalt.canopy.model.TrafficFrame
+import com.skyalt.canopy.model.V3
+import com.skyalt.canopy.model.WakeSample
 import com.skyalt.canopy.model.Compass
 import com.skyalt.canopy.model.DEG
 import com.skyalt.canopy.model.DropzoneSettings
@@ -155,6 +161,51 @@ class SceneController {
     private val scratch = FloatArray(16)
     private val scratch2 = FloatArray(16)
 
+    // Clouds and fog
+    private var cloudSettings = CloudSettings()
+    private var cloudTextures = intArrayOf(0, 0)
+    private var cloudTextureDensity = -1.0
+    private var cloudMesh: GpuMesh? = null
+
+    // Wakes: the youngest puffs, as x, y, z, radius and opacity.
+    var showsWakes = true
+    private var wakeMesh: GpuMesh? = null
+    private val wakeData = FloatArray(WAKE_LIMIT * 5)
+    private var wakeCount = 0
+
+    /** False in the scenes that hide the pattern, the trail and the earlier runs. */
+    var showsPaths = true
+
+    // The scenes' airfield, the aircraft and the people on the ground
+    private var airfieldVisible = false
+    private var airfieldFlats: List<GpuPart>? = null
+    private var airfieldSolids: List<GpuPart>? = null
+    private var aircraftVisible = false
+    private var aircraftBody: List<GpuPart>? = null
+    private var aircraftPropeller: List<GpuPart>? = null
+    private var aircraftHub = V3(0f, 0f, 0f)
+    private val aircraftModel = FloatArray(16)
+    private val propellerModel = FloatArray(16)
+    private var aircraftPlaced = false
+    private var aircraftPresent = true
+    private var propellerAngle = 0.0
+    private var peoplePositions: List<Vec3> = emptyList()
+    private var personParts: List<List<GpuPart>>? = null
+
+    // The other canopies
+    private class TrafficVariant(val top: GpuMesh, val bottom: GpuMesh, val inlet: GpuMesh, val lines: GpuMesh)
+    private class TrafficRig(val top: FloatArray, val bottom: FloatArray, val student: Boolean, val bucket: Int) {
+        val model = FloatArray(16)
+        val jumper = FloatArray(16)
+        var variant = 0
+        var visible = false
+        var landed = false
+    }
+    private val trafficBuilder = CanopyMeshBuilder()
+    private val trafficVariants = HashMap<Int, List<TrafficVariant>>()
+    private var trafficJumpers: List<List<GpuPart>>? = null
+    private val trafficRigs = ArrayList<TrafficRig>()
+
     // Pending work from the engine, applied on the GL thread before drawing
     private var pendingPattern: Triple<SimulatorConfiguration, AeroParameters, Triple<String, String, String>>? = null
 
@@ -195,6 +246,13 @@ class SceneController {
         ghostDirty = true
         patternDirty = true
         if (pendingDropzone == null) pendingDropzone = dropzoneBitmap to dropzoneSettings
+        // GL objects of the lost context are gone with it; they are built again on use.
+        cloudMesh = null; cloudTextures = intArrayOf(0, 0); cloudTextureDensity = -1.0
+        wakeMesh = null
+        airfieldFlats = null; airfieldSolids = null
+        aircraftBody = null; aircraftPropeller = null
+        personParts = null
+        trafficVariants.clear(); trafficJumpers = null
         ready = true
     }
 
@@ -202,7 +260,9 @@ class SceneController {
 
     fun update(frame: FlightFrame, dt: Double) {
         if (!ready) return
-        updateCanopy(frame.leftBrake, frame.rightBrake, frame.stall, frame.collapse)
+        // Turbulence flutters the skins the way a stall's onset sags them.
+        val flutter = frame.turbulence * (0.2 + 0.15 * sin(frame.time * 27) * sin(frame.time * 11 + 1))
+        updateCanopy(frame.leftBrake, frame.rightBrake, max(frame.stall, flutter), frame.collapse)
         updateRig(frame)
         updateCamera(frame, dt)
     }
@@ -586,8 +646,16 @@ class SceneController {
         GLES30.glUniform3f(shader.uAmbient, 0.62f, 0.68f, 0.64f)
         GLES30.glUniform3f(shader.uSun, 0.85f, 0.85f, 0.85f)
         GLES30.glUniform3f(shader.uEye, eye[0], eye[1], eye[2])
-        GLES30.glUniform2f(shader.uFog, 250f, 2600f)
-        GLES30.glUniform3f(shader.uFogColor, 0.788f, 0.847f, 0.902f)
+        // Inside the cloud layer the fog closes in with the density: a few
+        // tens of metres in a solid overcast, a few hundred in a thin one.
+        if (cloudSettings.contains(eye[1].toDouble())) {
+            val thin = 1 - cloudSettings.density
+            GLES30.glUniform2f(shader.uFog, 2f, (30 + 500 * thin * thin).toFloat())
+            GLES30.glUniform3f(shader.uFogColor, 0.875f, 0.89f, 0.91f)
+        } else {
+            GLES30.glUniform2f(shader.uFog, 250f, 2600f)
+            GLES30.glUniform3f(shader.uFogColor, 0.788f, 0.847f, 0.902f)
+        }
         GLES30.glUniform1i(shader.uTexture, 0)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthFunc(GLES30.GL_LEQUAL)
@@ -597,7 +665,11 @@ class SceneController {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groundTexture)
         draw(groundMesh, identity, GROUND_WHITE, lit = true, texture = true, uvScale = 200f)
         GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
-        dropzoneMesh?.let {
+        if (airfieldVisible) {
+            GLES30.glPolygonOffset(-1f, -2f)
+            for (part in airfieldFlats ?: GpuPart.of(Models.airfield().first).also { airfieldFlats = it }) drawPart(part)
+        }
+        dropzoneMesh?.takeIf { !airfieldVisible }?.let {
             GLES30.glPolygonOffset(-1f, -2f)
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, dropzoneTexture)
             draw(it, dropzoneModel, WHITE, lit = false, texture = true)
@@ -608,8 +680,10 @@ class SceneController {
         val dropModel = FloatArray(16).also { Matrix.setIdentityM(it, 0); Matrix.translateM(it, 0, dropPosition[0], dropPosition[1], dropPosition[2]) }
         draw(dropRingMesh, dropModel, floatArrayOf(0.055f, 0.102f, 0.157f, 0.45f), lit = false)
         GLES30.glPolygonOffset(-3f, -6f)
-        for (part in patternParts) draw(part.mesh, part.model, part.color, part.lit)
+        if (showsPaths) for (part in patternParts) draw(part.mesh, part.model, part.color, part.lit)
         GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
+
+        drawAirfieldAndCrowd()
 
         // Windsock
         windsockPosition?.let { p ->
@@ -625,12 +699,12 @@ class SceneController {
         }
 
         // Trails
-        if (!trailMesh.isEmpty) {
+        if (showsPaths && !trailMesh.isEmpty) {
             val style = pathStyle.trail
             val c = if (pathStyle.trailColoredBySink) floatArrayOf(1f, 1f, 1f, style.opacity.toFloat()) else color(style, 1.0)
             draw(trailMesh, identity, c, lit = false, vertexColor = pathStyle.trailColoredBySink)
         }
-        for (i in ghostTrailPoints.indices) draw(ghostMeshes[i], identity, color(pathStyle.history, 1.0), lit = false)
+        if (showsPaths) for (i in ghostTrailPoints.indices) draw(ghostMeshes[i], identity, color(pathStyle.history, 1.0), lit = false)
 
         // The rig
         draw(topMesh, rigModel, WHITE, lit = true, vertexColor = true)
@@ -649,9 +723,14 @@ class SceneController {
         draw(riserMesh, rigModel, CanopyMeshBuilder.rgb(0x1a1f26), lit = false)
         draw(dropLineMesh, identity, floatArrayOf(0.055f, 0.102f, 0.157f, 0.35f), lit = false)
         if (jumperAlpha > 0.01f) drawJumper()
+        drawTraffic()
+
+        // See-through things last, without writing depth.
+        drawWakes()
+        drawClouds()
 
         // Labels on top, facing the camera.
-        if (labels.isNotEmpty()) {
+        if (showsPaths && labels.isNotEmpty()) {
             GLES30.glDisable(GLES30.GL_DEPTH_TEST)
             for (label in labels) {
                 val d = dist(eye, label.position)
@@ -662,6 +741,217 @@ class SceneController {
             }
             GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         }
+    }
+
+    // MARK: - Clouds
+
+    /** The cloud layer: a textured plane at its base and one at its top; nothing at zero density. */
+    fun setClouds(settings: CloudSettings) {
+        cloudSettings = settings
+    }
+
+    private fun drawClouds() {
+        val settings = cloudSettings
+        if (!settings.isVisible) return
+        if (cloudTextureDensity != settings.density || cloudTextures[0] == 0) {
+            for (t in cloudTextures) Textures.delete(t)
+            cloudTextures = intArrayOf(
+                Textures.uploadRaw(Models.cloudTexture(settings.density, floatArrayOf(0.83f, 0.85f, 0.88f)), repeat = true),
+                Textures.uploadRaw(Models.cloudTexture(settings.density, floatArrayOf(0.97f, 0.97f, 0.98f)), repeat = true),
+            )
+            cloudTextureDensity = settings.density
+        }
+        val mesh = cloudMesh ?: GpuMesh().apply { set(Primitives.groundPlane(12_000f, 12_000f)) }.also { cloudMesh = it }
+        val alpha = (0.65 + 0.35 * settings.density).toFloat()
+        GLES30.glDepthMask(false)
+        for ((i, altitude) in listOf(settings.baseAltitudeMeters, settings.topAltitudeMeters).withIndex()) {
+            val model = FloatArray(16).also { Matrix.setIdentityM(it, 0); Matrix.translateM(it, 0, 0f, altitude.toFloat(), 0f) }
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, cloudTextures[i])
+            draw(mesh, model, floatArrayOf(1f, 1f, 1f, alpha), lit = false, texture = true, uvScale = 16f)
+        }
+        GLES30.glDepthMask(true)
+    }
+
+    // MARK: - Wakes
+
+    /** The youngest wake puffs as faint grey spheres that grow and fade with age. */
+    fun updateWakes(samples: List<WakeSample>, time: Double) {
+        if (!showsWakes) { wakeCount = 0; return }
+        val count = min(samples.size, WAKE_LIMIT)
+        val offset = samples.size - count
+        var n = 0
+        for (i in 0 until count) {
+            val sample = samples[offset + i]
+            val strength = sample.strength(time)
+            if (strength <= 0.03) continue
+            val c = sample.centre(time)
+            wakeData[n * 5] = c.x.toFloat(); wakeData[n * 5 + 1] = c.y.toFloat(); wakeData[n * 5 + 2] = c.z.toFloat()
+            wakeData[n * 5 + 3] = sample.radius(time).toFloat()
+            wakeData[n * 5 + 4] = (0.16 * strength).toFloat()
+            n++
+        }
+        wakeCount = n
+    }
+
+    private fun drawWakes() {
+        if (!showsWakes || wakeCount == 0) return
+        val mesh = wakeMesh ?: GpuMesh().apply { set(Primitives.sphere(1f, 6, 10)) }.also { wakeMesh = it }
+        GLES30.glDepthMask(false)
+        val model = FloatArray(16)
+        for (i in 0 until wakeCount) {
+            val r = wakeData[i * 5 + 3]
+            Matrix.setIdentityM(model, 0)
+            Matrix.translateM(model, 0, wakeData[i * 5], wakeData[i * 5 + 1], wakeData[i * 5 + 2])
+            Matrix.scaleM(model, 0, r, r, r)
+            draw(mesh, model, floatArrayOf(0.62f, 0.62f, 0.62f, wakeData[i * 5 + 4]), lit = false)
+        }
+        GLES30.glDepthMask(true)
+    }
+
+    // MARK: - Airfield, aircraft and people
+
+    /** Shows the scenes' airfield in place of the dropzone picture, or hides it again. */
+    fun setAirfield(visible: Boolean) {
+        airfieldVisible = visible
+    }
+
+    fun setAircraft(visible: Boolean) {
+        aircraftVisible = visible
+        if (!visible) aircraftPlaced = false
+    }
+
+    fun updateAircraft(state: AircraftState) {
+        aircraftPresent = state.isPresent
+        Matrix.setIdentityM(aircraftModel, 0)
+        Matrix.translateM(aircraftModel, 0, state.position.x.toFloat(), state.position.y.toFloat(), state.position.z.toFloat())
+        Matrix.rotateM(aircraftModel, 0, (-state.heading / DEG).toFloat(), 0f, 1f, 0f)
+        Matrix.rotateM(aircraftModel, 0, (state.pitch / DEG).toFloat(), 1f, 0f, 0f)
+        propellerAngle = (propellerAngle + state.speed * 0.04) % (2 * Math.PI)
+        aircraftPlaced = true
+    }
+
+    /** People standing on the landing area: the first on the target in red, the rest in yellow. */
+    fun setPeople(positions: List<Vec3>) {
+        peoplePositions = positions
+    }
+
+    private fun drawAirfieldAndCrowd() {
+        if (airfieldVisible) {
+            for (part in airfieldSolids ?: GpuPart.of(Models.airfield().second).also { airfieldSolids = it }) drawPart(part)
+        }
+        if (peoplePositions.isNotEmpty()) {
+            val kinds = personParts ?: listOf(GpuPart.of(Models.person(0xe4582b)), GpuPart.of(Models.person(0xf2c12e))).also { personParts = it }
+            val root = FloatArray(16)
+            for ((i, p) in peoplePositions.withIndex()) {
+                Matrix.setIdentityM(root, 0)
+                Matrix.translateM(root, 0, p.x.toFloat(), 0f, p.z.toFloat())
+                for (part in kinds[if (i == 0) 0 else 1]) drawPart(part, root)
+            }
+        }
+        if (aircraftVisible && aircraftPlaced && aircraftPresent) {
+            if (aircraftBody == null) {
+                val built = Models.aircraft()
+                aircraftBody = GpuPart.of(built.body)
+                aircraftPropeller = GpuPart.of(built.propeller)
+                aircraftHub = built.hub
+            }
+            for (part in aircraftBody!!) drawPart(part, aircraftModel)
+            aircraftModel.copyInto(propellerModel)
+            Matrix.translateM(propellerModel, 0, aircraftHub.x, aircraftHub.y, aircraftHub.z)
+            Matrix.rotateM(propellerModel, 0, Math.toDegrees(propellerAngle).toFloat(), 0f, 0f, 1f)
+            for (part in aircraftPropeller!!) drawPart(part, propellerModel)
+        }
+    }
+
+    // MARK: - Traffic
+
+    /** A rig for each of the other canopies: the wing in its own colour at the bucketed size, the lines and a jumper. */
+    fun setTraffic(appearances: List<TrafficAppearance>) {
+        trafficRigs.clear()
+        for (appearance in appearances) {
+            val bucket = max(2, Math.round(appearance.areaSquareFeet / 30).toInt())
+            val hex = TRAFFIC_PALETTE[appearance.colorIndex % TRAFFIC_PALETTE.size]
+            val top = CanopyMeshBuilder.rgb(hex)
+            val bottom = floatArrayOf(top[0] * 0.8f, top[1] * 0.8f, top[2] * 0.8f, 1f)
+            trafficRigs += TrafficRig(top, bottom, appearance.isStudent, bucket)
+        }
+    }
+
+    /**
+     * Places every other canopy for the frame: the rig at the canopy's
+     * centre, turned and banked like the jumper's, the wing at the nearest
+     * of three brake positions; a landed one keeps only its jumper.
+     */
+    fun updateTraffic(frames: List<TrafficFrame>) {
+        val l = CanopyMeshShape.LINE_LENGTH.toFloat()
+        val r = FloatArray(16)
+        for ((i, rig) in trafficRigs.withIndex()) {
+            val frame = frames.getOrNull(i)
+            if (frame == null) { rig.visible = false; continue }
+            rig.visible = true
+            rig.landed = frame.landed
+            Matrix.setIdentityM(r, 0)
+            Matrix.rotateM(r, 0, (-frame.heading / DEG).toFloat(), 0f, 1f, 0f)
+            if (!frame.landed) {
+                Matrix.rotateM(r, 0, (frame.pitch / DEG).toFloat(), 1f, 0f, 0f)
+                Matrix.rotateM(r, 0, (-frame.bank / DEG).toFloat(), 0f, 0f, 1f)
+            }
+            val px = frame.position.x.toFloat() + r[4] * l
+            val py = frame.position.y.toFloat() + r[5] * l
+            val pz = frame.position.z.toFloat() + r[6] * l
+            Matrix.setIdentityM(scratch, 0)
+            Matrix.translateM(scratch, 0, px, py, pz)
+            Matrix.multiplyMM(rig.model, 0, scratch, 0, r, 0)
+            rig.model.copyInto(rig.jumper)
+            Matrix.translateM(rig.jumper, 0, 0f, -l, 0f)
+            val brake = (frame.leftBrake + frame.rightBrake) / 2
+            rig.variant = if (brake < 0.25) 0 else if (brake < 0.75) 1 else 2
+        }
+    }
+
+    /** The wing at no, half and full brake for a size bucket (30 ft² steps). */
+    private fun trafficVariants(bucket: Int): List<TrafficVariant> = trafficVariants.getOrPut(bucket) {
+        val scale = CanopyMeshShape.scale(bucket * 30.0)
+        listOf(0.0, 0.5, 1.0).map { brake ->
+            val b = trafficBuilder
+            b.update(brake, brake, 0.0, 0.0, scale)
+            val lines = FloatArray(b.lineSegments.size + b.riserSegments.size)
+            b.lineSegments.data.copyInto(lines, 0, 0, b.lineSegments.size)
+            b.riserSegments.data.copyInto(lines, b.lineSegments.size, 0, b.riserSegments.size)
+            TrafficVariant(
+                GpuMesh().apply { set(b.topVertices, normals = b.topNormals, indices = b.skinIndices) },
+                GpuMesh().apply { set(b.bottomVertices, normals = b.bottomNormals, indices = b.skinIndices) },
+                GpuMesh().apply { set(b.inletVertices, normals = b.inletNormals, indices = b.inletIndices) },
+                GpuMesh(GLES30.GL_LINES).apply { set(lines, lines.size) },
+            )
+        }
+    }
+
+    private fun drawTraffic() {
+        if (trafficRigs.isEmpty()) return
+        val jumpers = trafficJumpers ?: listOf(GpuPart.of(Models.trafficJumper(0x3b4f6b)), GpuPart.of(Models.trafficJumper(0x1a1f26))).also { trafficJumpers = it }
+        for (rig in trafficRigs) {
+            if (!rig.visible) continue
+            if (!rig.landed) {
+                val v = trafficVariants(rig.bucket)[rig.variant]
+                draw(v.top, rig.model, rig.top, lit = true)
+                draw(v.bottom, rig.model, rig.bottom, lit = true)
+                draw(v.inlet, rig.model, INLET, lit = true)
+                draw(v.lines, rig.model, TRAFFIC_LINES, lit = false)
+            }
+            for (part in jumpers[if (rig.student) 0 else 1]) drawPart(part, rig.jumper)
+        }
+    }
+
+    private val partScratch = FloatArray(16)
+
+    private fun drawPart(part: GpuPart, parent: FloatArray? = null) {
+        val model = if (parent != null) {
+            Matrix.multiplyMM(partScratch, 0, parent, 0, part.model, 0)
+            partScratch
+        } else part.model
+        if (part.texture != 0) GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, part.texture)
+        draw(part.mesh, model, part.color, part.lit, texture = part.texture != 0)
     }
 
     private fun drawJumper() {
@@ -725,6 +1015,13 @@ class SceneController {
         val FIRST_PERSON_PITCH = -10 * DEG
         const val EYE_HEIGHT = 0.45
         const val TRAIL_MAXIMUM = 4000
+        const val WAKE_LIMIT = 900
+        private val INLET = floatArrayOf(0.165f, 0.102f, 0.071f, 1f)
+        private val TRAFFIC_LINES = floatArrayOf(0.957f, 0.957f, 0.941f, 0.7f)
+        private val TRAFFIC_PALETTE = intArrayOf(
+            0xe4582b, 0x2f6fd6, 0xf2c12e, 0x1f7a4d, 0x8e44ad, 0xe67e22, 0x16a085, 0xc0392b,
+            0x2980b9, 0xd35400, 0x27ae60, 0x7f8c8d, 0xf39c12, 0x1abc9c, 0x9b59b6, 0x34495e,
+        )
         const val WINDSOCK_POLE = 10.0
         const val WINDSOCK_LENGTH = 10.0
         const val WINDSOCK_MOUTH = 1.4

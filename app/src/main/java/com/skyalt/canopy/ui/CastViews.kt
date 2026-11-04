@@ -90,6 +90,10 @@ fun CastControls(
         if (state.showsLandingCard && touchdown != null) {
             Box(Modifier.align(Alignment.Center)) { LandingCard(state, touchdown, engine) }
         }
+        val accident = state.accident
+        if (accident != null && state.replay == null) {
+            Box(Modifier.align(Alignment.Center)) { AccidentCard(state, accident, engine) }
+        }
     }
 }
 
@@ -217,6 +221,10 @@ fun ExternalStage(state: UiState?, engine: SimulatorEngine, capture: MotionCaptu
         val touchdown = state.touchdown
         if (state.showsLandingCard && touchdown != null) {
             Box(Modifier.align(Alignment.Center)) { ScaledBox(scale) { LandingCard(state, touchdown, engine) } }
+        }
+        val accident = state.accident
+        if (accident != null && state.replay == null) {
+            Box(Modifier.align(Alignment.Center)) { ScaledBox(scale) { AccidentCard(state, accident, engine) } }
         }
     }
 }
