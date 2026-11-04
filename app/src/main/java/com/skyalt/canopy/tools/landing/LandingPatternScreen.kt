@@ -74,7 +74,6 @@ import com.google.maps.android.compose.Polyline
 import com.skyalt.canopy.app.AltitudeUnit
 import com.skyalt.canopy.app.AppSettings
 import com.skyalt.canopy.app.ProFeature
-import com.skyalt.canopy.sim.ProAccess
 import com.skyalt.canopy.tools.AltixOrange
 import com.skyalt.canopy.tools.SegmentedPicker
 import com.skyalt.canopy.tools.SwipeNumberInput
@@ -133,7 +132,7 @@ fun checkpointLabel(feet: Double, unit: AltitudeUnit, s: Strings): String =
 fun LandingPatternScreen(
     session: LandingPatternSession,
     settings: AppSettings,
-    pro: ProAccess,
+    isPro: Boolean,
     onBack: () -> Unit,
     onLocked: (ProFeature) -> Unit,
 ) {
@@ -145,7 +144,7 @@ fun LandingPatternScreen(
     var bottomInset by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
 
-    LaunchedEffect(pro.isPro) { session.enforceProAccess(pro.isPro) }
+    LaunchedEffect(isPro) { session.enforceProAccess(isPro) }
     LaunchedEffect(tracker.location) { tracker.location?.let { session.handleLocationFix(Coordinate(it.latitude, it.longitude)) } }
     ApplyCameraRequests(session.camera, session.cameraRequest) { session.cameraRequest = null }
 
@@ -190,7 +189,7 @@ fun LandingPatternScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 WaypointActions(session)
-                ConfigurationPanel(session, pro.isPro) { onLocked(ProFeature.SWOOP_MODE) }
+                ConfigurationPanel(session, isPro) { onLocked(ProFeature.SWOOP_MODE) }
             }
 
             if (session.wind.isLoading) {

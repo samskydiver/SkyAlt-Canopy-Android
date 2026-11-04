@@ -65,6 +65,8 @@ fun ToolsScreen(
     onLocked: (ProFeature) -> Unit,
 ) {
     val s = LocalStrings.current
+    // The development build unlocks the Pro tools, as it lifts the free-session limit.
+    val proUnlocked = pro.isPro || !trialEnforced
     FormColumn(padding) {
         FormSection(s("Simulator")) {
             val subtitle = when {
@@ -78,8 +80,8 @@ fun ToolsScreen(
         FormSection(s("Flight Planning")) {
             ToolRow(s("Landing Pattern Assistant"), s("Plan wind-adjusted canopy landing patterns"), Icons.Filled.Route) { onOpen(Tool.LANDING_PATTERN) }
             FormDivider()
-            ToolRow(s("Exit Spot"), s("Calculate a wind-adjusted exit window"), Icons.Filled.Flight, locked = !pro.isPro) {
-                if (pro.isPro) onOpen(Tool.EXIT_SPOT) else onLocked(ProFeature.EXIT_SPOT)
+            ToolRow(s("Exit Spot"), s("Calculate a wind-adjusted exit window"), Icons.Filled.Flight, locked = !proUnlocked) {
+                if (proUnlocked) onOpen(Tool.EXIT_SPOT) else onLocked(ProFeature.EXIT_SPOT)
             }
         }
         FormSection(s("My Canopy")) {
@@ -87,8 +89,8 @@ fun ToolsScreen(
             FormDivider()
             ToolRow(s("Wingload Calculator"), s("Balance exit weight and canopy size"), Icons.Filled.MonitorWeight) { onOpen(Tool.WINGLOAD) }
             FormDivider()
-            ToolRow(s("Cutaway Finder"), s("Model a main-canopy search area"), Icons.Filled.GpsFixed, locked = !pro.isPro) {
-                if (pro.isPro) onOpen(Tool.CUTAWAY_FINDER) else onLocked(ProFeature.CUTAWAY_FINDER)
+            ToolRow(s("Cutaway Finder"), s("Model a main-canopy search area"), Icons.Filled.GpsFixed, locked = !proUnlocked) {
+                if (proUnlocked) onOpen(Tool.CUTAWAY_FINDER) else onLocked(ProFeature.CUTAWAY_FINDER)
             }
         }
         FormSection(s("Safety")) {

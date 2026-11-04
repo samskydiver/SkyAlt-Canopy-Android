@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
                             proSheet -> ProUpgradeScreen(pro, trialUsedUp = proFocus == ProFeature.CANOPY_SIMULATOR, onClose = { proSheet = false }, focus = proFocus)
                             tool == Tool.WINGLOAD -> WingLoadScreen(back)
                             tool == Tool.REPACK -> RepackScreen(repack, back)
-                            tool == Tool.LANDING_PATTERN -> LandingPatternScreen(sessions.landing, settings, pro, back, onLocked = ::showPro)
+                            tool == Tool.LANDING_PATTERN -> LandingPatternScreen(sessions.landing, settings, pro.isPro || !BuildConfig.TRIAL_ENFORCED, back, onLocked = ::showPro)
                             tool == Tool.EXIT_SPOT -> ExitSpotScreen(sessions.exitSpot, settings, back)
                             tool == Tool.CUTAWAY_FINDER -> CutawayFinderScreen(sessions.cutaway, settings, back)
                             else -> Scaffold(
