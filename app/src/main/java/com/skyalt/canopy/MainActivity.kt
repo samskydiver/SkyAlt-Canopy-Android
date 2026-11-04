@@ -41,7 +41,6 @@ import com.skyalt.canopy.tools.altixColors
 import com.skyalt.canopy.tools.cutaway.CutawayFinderScreen
 import com.skyalt.canopy.tools.exitspot.ExitSpotScreen
 import com.skyalt.canopy.tools.landing.LandingPatternScreen
-import com.skyalt.canopy.tools.planning.ToolSessions
 import com.skyalt.canopy.ui.Palette
 import com.skyalt.canopy.ui.ProUpgradeScreen
 import com.skyalt.canopy.ui.ProvideSimulatorLocals
@@ -66,7 +65,7 @@ class MainActivity : ComponentActivity() {
         val settings = AppServices.settings(this)
         val repack = RepackStore(applicationContext)
         // Tool sessions live here so each tool keeps its state across tab switches.
-        val sessions = ToolSessions(applicationContext)
+        val sessions = AppServices.sessions(this)
 
         setContent {
             val chinese = language.value.isChinese(LocalConfiguration.current.locales[0])

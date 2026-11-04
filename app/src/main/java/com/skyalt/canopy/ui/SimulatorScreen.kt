@@ -199,7 +199,7 @@ fun SimulatorScreen(
             }
         }
         if (showingPro) {
-            ProUpgradeScreen(host.pro, trialUsedUp = false) { showingPro = false }
+            ProUpgradeScreen(host.pro, trialUsedUp = false, onClose = { showingPro = false })
         }
     }
 }

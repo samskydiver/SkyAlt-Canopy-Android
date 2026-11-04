@@ -15,6 +15,7 @@ object AppServices {
     private var simulatorTrial: SimulatorTrial? = null
     private var languageSetting: LanguageSetting? = null
     private var appSettings: AppSettings? = null
+    private var toolSessions: com.skyalt.canopy.tools.planning.ToolSessions? = null
 
     fun pro(context: Context): ProAccess = proAccess ?: ProAccess(context.applicationContext).also {
         proAccess = it
@@ -29,4 +30,8 @@ object AppServices {
 
     fun settings(context: Context): AppSettings =
         appSettings ?: AppSettings(context.applicationContext).also { appSettings = it }
+
+    /** The map tools' sessions, kept for the life of the process so a plan survives rotation and leaving a tool. */
+    fun sessions(context: Context): com.skyalt.canopy.tools.planning.ToolSessions =
+        toolSessions ?: com.skyalt.canopy.tools.planning.ToolSessions(context.applicationContext).also { toolSessions = it }
 }

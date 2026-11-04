@@ -21,7 +21,7 @@ import androidx.compose.material.icons.filled.EventRepeat
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.ThreeDRotation
+import androidx.compose.material.icons.filled.Paragliding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -73,7 +73,7 @@ fun ToolsScreen(
                 else -> s("Free sessions used up. Subscribe to AltiX Pro to keep flying.")
             }
             val locked = !pro.isPro && trialEnforced && trial.isLoaded && !trial.hasSessionsLeft
-            ToolRow(s("Canopy Simulator"), subtitle, Icons.Filled.ThreeDRotation, locked = locked, onClick = onSimulator)
+            ToolRow(s("Canopy Simulator"), subtitle, Icons.Filled.Paragliding, locked = locked, onClick = onSimulator)
         }
         FormSection(s("Flight Planning")) {
             ToolRow(s("Landing Pattern Assistant"), s("Plan wind-adjusted canopy landing patterns"), Icons.Filled.Route) { onOpen(Tool.LANDING_PATTERN) }
