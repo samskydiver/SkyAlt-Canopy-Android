@@ -167,7 +167,7 @@ fun LandingPatternScreen(
             }
 
             Column(
-                Modifier.align(Alignment.CenterEnd).padding(end = 14.dp),
+                Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = with(density) { topInset.toDp() } + 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End,
             ) {

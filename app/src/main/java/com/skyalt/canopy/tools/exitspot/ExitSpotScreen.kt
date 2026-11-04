@@ -164,7 +164,7 @@ fun ExitSpotScreen(session: ExitSpotSession, settings: AppSettings, onBack: () -
             }
 
             Column(
-                Modifier.align(if (landscape) Alignment.TopEnd else Alignment.CenterEnd).padding(end = 14.dp, top = 8.dp),
+                Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = with(density) { topInset.toDp() } + 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End,
             ) {

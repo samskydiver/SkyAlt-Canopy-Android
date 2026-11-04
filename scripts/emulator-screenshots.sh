@@ -52,6 +52,8 @@ tap_ui "Exit Spot" && {
   shot 00f-exit-ranges 10
   back
 }
+adb shell input swipe 540 1400 540 500 400
+sleep 1
 tap_ui "Cutaway Finder" && {
   shot 00g-cutaway 4
   tap_ui "Draw Cutaway Area" || echo "no draw button"

@@ -156,7 +156,8 @@ fun <T> SegmentedPicker(options: List<T>, selection: T, title: (T) -> String, on
                 selected = option == selection,
                 onClick = { onSelect(option) },
                 shape = SegmentedButtonDefaults.itemShape(index, options.size),
-                label = { Text(title(option), maxLines = 1) },
+                icon = {},
+                label = { Text(title(option), maxLines = 1, softWrap = false) },
             )
         }
     }
