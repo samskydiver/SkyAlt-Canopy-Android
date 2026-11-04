@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.skyalt.canopy.ui.formatNumber
 import com.skyalt.canopy.ui.parseNumber
@@ -51,6 +52,11 @@ fun SwipeNumberInput(
     step: Double,
     onValue: (Double) -> Unit,
     range: ClosedFloatingPointRange<Double>? = null,
+    dpPerStep: Float = 10f,
+    valueFontSize: TextUnit = 24.sp,
+    titleFontSize: TextUnit = 15.sp,
+    titleColor: Color = Color.Unspecified,
+    modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf(formatNumber(value, fractionDigits)) }
@@ -61,13 +67,13 @@ fun SwipeNumberInput(
     var carry by remember { mutableFloatStateOf(0f) }
 
     Column(
-        Modifier.fillMaxWidth().pointerInput(focused, step) {
+        modifier.fillMaxWidth().pointerInput(focused, step, dpPerStep) {
             if (!focused) {
                 detectHorizontalDragGestures(onDragStart = { carry = 0f }) { _, dx ->
                     carry += dx / density
-                    val steps = (carry / 10f).toInt()
+                    val steps = (carry / dpPerStep).toInt()
                     if (steps != 0) {
-                        carry -= steps * 10f
+                        carry -= steps * dpPerStep
                         var next = (Math.round(current / step) + steps) * step
                         if (range != null) next = next.coerceIn(range)
                         onValue(next)
@@ -76,7 +82,7 @@ fun SwipeNumberInput(
             }
         },
     ) {
-        Text(title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        Text(title, fontWeight = FontWeight.SemiBold, fontSize = titleFontSize, color = if (titleColor == Color.Unspecified) MaterialTheme.colorScheme.onSurface else titleColor, maxLines = 1)
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextField(
                 value = text,
@@ -85,7 +91,7 @@ fun SwipeNumberInput(
                     parseNumber(t)?.let { v -> onValue(if (range != null) v.coerceIn(range) else v) }
                 },
                 singleLine = true,
-                textStyle = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End, fontFeatureSettings = "tnum"),
+                textStyle = TextStyle(fontSize = valueFontSize, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End, fontFeatureSettings = "tnum"),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
                 colors = TextFieldDefaults.colors(
