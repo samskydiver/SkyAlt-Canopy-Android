@@ -1,5 +1,8 @@
 package com.skyalt.canopy.app
 
+import com.skyalt.canopy.R
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -53,7 +56,7 @@ fun SettingsScreen(padding: PaddingValues, pro: ProAccess, language: LanguageSet
             )
             if (!pro.isPro) {
                 Button(onClick = onUnlock, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                    Icon(SimIcons.Crown, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Image(painterResource(R.drawable.ic_pro_pin), null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(s("Unlock AltiX Pro"), color = Color.White)
                 }

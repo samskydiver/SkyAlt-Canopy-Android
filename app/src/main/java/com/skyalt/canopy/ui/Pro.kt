@@ -1,5 +1,8 @@
 package com.skyalt.canopy.ui
 
+import com.skyalt.canopy.R
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -67,11 +70,11 @@ fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Icon(
-                    if (pro.isPro) Icons.Filled.CheckCircle else SimIcons.Crown, null,
-                    tint = if (pro.isPro) p.good else hex(0xf08a24),
-                    modifier = Modifier.size(48.dp),
-                )
+                if (pro.isPro) {
+                    Icon(Icons.Filled.CheckCircle, null, tint = p.good, modifier = Modifier.size(48.dp))
+                } else {
+                    Image(painterResource(R.drawable.ic_pro_pin), null, modifier = Modifier.size(56.dp))
+                }
                 Text(
                     if (pro.isPro) s("AltiX Pro Active") else s("Unlock Everything"),
                     fontSize = 26.sp, fontWeight = FontWeight.Bold, color = p.foreground,
@@ -177,6 +180,6 @@ fun ProBlock(pro: ProAccess, trial: SimulatorTrial, trialEnforced: Boolean, onOp
             !trialEnforced -> Note(s("Development build: the free-session limit is off."))
             else -> Note(s.format("%1\$d of %2\$d free sessions left", trial.sessionsLeft, SimulatorTrial.FREE_SESSIONS))
         }
-        ChipButton(if (pro.isPro) s("Manage") else s("Unlock AltiX Pro"), icon = SimIcons.Crown, onClick = onOpen)
+        ChipButton(if (pro.isPro) s("Manage") else s("Unlock AltiX Pro"), iconPainter = painterResource(R.drawable.ic_pro_pin), onClick = onOpen)
     }
 }

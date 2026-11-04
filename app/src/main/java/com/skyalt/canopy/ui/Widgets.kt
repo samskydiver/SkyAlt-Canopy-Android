@@ -1,5 +1,7 @@
 package com.skyalt.canopy.ui
 
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -108,6 +110,8 @@ fun ChipButton(
     isOn: Boolean = false,
     isDisabled: Boolean = false,
     icon: ImageVector? = null,
+    /** A full-colour image drawn untinted in place of [icon]. */
+    iconPainter: Painter? = null,
     fontSize: Int = 13,
     fillsWidth: Boolean = false,
     iconOnly: Boolean = false,
@@ -133,13 +137,19 @@ fun ChipButton(
     if (style == ChipStyle.PANEL && !isOn) m = m.border(1.dp, p.line, shape)
     m = m.clickable(enabled = !isDisabled, onClick = onClick)
     if (fillsWidth) m = m.fillMaxWidth()
-    if (stacked && icon != null) {
+    val hasIcon = icon != null || iconPainter != null
+    @Composable
+    fun IconImage(size: androidx.compose.ui.unit.Dp, description: String?) {
+        if (iconPainter != null) Image(iconPainter, contentDescription = description, modifier = Modifier.size(size))
+        else if (icon != null) Icon(icon, contentDescription = description, tint = foreground, modifier = Modifier.size(size))
+    }
+    if (stacked && hasIcon) {
         // Narrow viewports: the icon with its name underneath, so each button stays labelled.
         Column(
             m.padding(horizontal = 8.dp, vertical = 5.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size((fontSize + 4).dp))
+            IconImage((fontSize + 4).dp, null)
             Text(title.uppercase(), style = displayStyle((fontSize - 3).sp), color = foreground, maxLines = 1, letterSpacing = 0.4.sp)
         }
         return
@@ -149,11 +159,11 @@ fun ChipButton(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) {
-            Icon(icon, contentDescription = title, tint = foreground, modifier = Modifier.size(if (iconOnly) (fontSize + 6).dp else (fontSize + 2).dp))
+        if (hasIcon) {
+            IconImage(if (iconOnly) (fontSize + 6).dp else (fontSize + 2).dp, title)
             if (!iconOnly) Spacer(Modifier.width(5.dp))
         }
-        if (!iconOnly || icon == null) {
+        if (!iconOnly || !hasIcon) {
             Text(title.uppercase(), style = displayStyle(fontSize.sp), color = foreground, maxLines = 1, letterSpacing = 0.7.sp)
         }
     }
