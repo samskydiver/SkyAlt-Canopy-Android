@@ -45,8 +45,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.skyalt.canopy.sim.SimulatorEngine
 import com.skyalt.canopy.sim.UiState
+import com.skyalt.canopy.model.DEG
+import com.skyalt.canopy.model.DropzoneSettings
+import com.skyalt.canopy.model.RunwayGeometry
+import com.skyalt.canopy.model.RunwayPlacement
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.PathEffect
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * The dropzone picture under the fixed target rings: drag to move it, pinch
@@ -54,15 +68,27 @@ import kotlin.math.roundToInt
  * scale exactly.
  */
 @Composable
-fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) {
+fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Boolean = false, onDone: () -> Unit) {
     val s = LocalStrings.current
     val p = LocalPalette.current
-    val image = state.dropzoneImage ?: return
+    // For the runway the editor opens even without a picture.
+    val image = state.dropzoneImage
+    if (image == null && !startsWithRunway) return
     val density = LocalDensity.current
     var ppm by remember { mutableStateOf(0f) }
     var measuring by remember { mutableStateOf(false) }
     val points = remember { mutableStateListOf<Offset>() }
     var realDistance by remember { mutableStateOf(0.0) }
+    var placingRunway by remember { mutableStateOf(false) }
+    var runwayDrag by remember { mutableStateOf<RunwayDrag?>(null) }
+
+    fun beginPlacingRunway() {
+        measuring = false
+        points.clear()
+        if (state.dropzone.runway == null) engine.updateDropzone { it.copy(runway = defaultRunway(it)) }
+        placingRunway = true
+    }
+    LaunchedEffect(Unit) { if (startsWithRunway) beginPlacingRunway() }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(hex(0x1b2430))) {
         val w = constraints.maxWidth.toFloat()
@@ -71,15 +97,33 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
         val centre = Offset(w / 2 - with(density) { 130.dp.toPx() }, h / 2)
         val dz = state.dropzone
         val widthPx = dz.widthMeters.toFloat() * ppm
-        val heightPx = widthPx * image.height / max(1, image.width)
+        val heightPx = if (image != null) widthPx * image.height / max(1, image.width) else widthPx
         val at = Offset(centre.x + dz.eastOffsetMeters.toFloat() * ppm, centre.y + dz.southOffsetMeters.toFloat() * ppm)
-        val bitmap = remember(image) { image.asImageBitmap() }
+        val bitmap = remember(image) { image?.asImageBitmap() }
+        val frame = PictureFrame(at, widthPx, dz.rotationDegrees)
+        val latestDz by rememberUpdatedState(dz)
 
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(measuring) {
-                    if (measuring) {
+                .pointerInput(measuring, placingRunway, ppm) {
+                    if (placingRunway) {
+                        detectDragGestures(
+                            onDragStart = begin@{ start ->
+                                val runway = latestDz.runway ?: return@begin
+                                val f = latestDz.let { PictureFrame(Offset(centre.x + it.eastOffsetMeters.toFloat() * ppm, centre.y + it.southOffsetMeters.toFloat() * ppm), it.widthMeters.toFloat() * ppm, it.rotationDegrees) }
+                                runwayDrag = RunwayDrag(runwayHandle(start, runway, f), runway, f.fraction(start))
+                            },
+                            onDragEnd = { runwayDrag = null },
+                            onDragCancel = { runwayDrag = null },
+                        ) move@{ change, _ ->
+                            val drag = runwayDrag ?: return@move
+                            val d = latestDz
+                            val f = PictureFrame(Offset(centre.x + d.eastOffsetMeters.toFloat() * ppm, centre.y + d.southOffsetMeters.toFloat() * ppm), d.widthMeters.toFloat() * ppm, d.rotationDegrees)
+                            val moved = runwayMoved(drag, f.fraction(change.position), d.widthMeters)
+                            engine.updateDropzone { it.copy(runway = moved) }
+                        }
+                    } else if (measuring) {
                         detectTapGestures { point ->
                             if (points.size >= 2) points.clear()
                             points.add(point)
@@ -99,7 +143,7 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
                     }
                 },
         ) {
-            Image(
+            if (bitmap != null) Image(
                 bitmap, null,
                 contentScale = ContentScale.FillBounds,
                 modifier = Modifier
@@ -113,6 +157,32 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
                 }
                 drawLine(Color.White, centre - Offset(16.dp.toPx(), 0f), centre + Offset(16.dp.toPx(), 0f), 1.5.dp.toPx())
                 drawLine(Color.White, centre - Offset(0f, 16.dp.toPx()), centre + Offset(0f, 16.dp.toPx()), 1.5.dp.toPx())
+                dz.runway?.let { runway ->
+                    val corners = runwayCorners(runway).map { frame.screen(it) }
+                    val outline = Path().apply {
+                        moveTo(corners[0].x, corners[0].y)
+                        for (c in corners.drop(1)) lineTo(c.x, c.y)
+                        close()
+                    }
+                    drawPath(outline, hex(0xf07f1a, if (placingRunway) 0.32f else 0.2f))
+                    drawPath(outline, Color.White.copy(alpha = if (placingRunway) 1f else 0.8f), style = Stroke(if (placingRunway) 2.dp.toPx() else 1.5.dp.toPx()))
+                    val near = midpoint(corners[2], corners[3])
+                    val far = midpoint(corners[0], corners[1])
+                    drawLine(
+                        Color.White.copy(alpha = 0.8f), near, far, 1.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 6.dp.toPx())),
+                    )
+                    if (placingRunway) {
+                        val turn = turnHandlePoint(corners, TURN_STEM.dp.toPx())
+                        drawLine(Color.White, far, turn, 1.5.dp.toPx())
+                        drawCircle(Color.White, 9.dp.toPx(), turn)
+                        drawCircle(p.accent, 9.dp.toPx(), turn, style = Stroke(2.dp.toPx()))
+                        for (c in corners) {
+                            drawCircle(p.accent, 7.dp.toPx(), c)
+                            drawCircle(Color.White, 7.dp.toPx(), c, style = Stroke(2.dp.toPx()))
+                        }
+                    }
+                }
                 if (measuring) {
                     for (pt in points) {
                         drawCircle(hex(0xffd23f), 7.dp.toPx(), pt)
@@ -138,6 +208,20 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(s("Edit dropzone picture").uppercase(), style = displayStyle(13.sp), color = p.muted)
+            ChipButton(s("Set runway"), isOn = placingRunway, fillsWidth = true) {
+                if (placingRunway) placingRunway = false else beginPlacingRunway()
+            }
+            if (placingRunway) {
+                if (startsWithRunway) {
+                    Text(s("Set the runway on the picture first; the aircraft lands on it."), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
+                }
+                Note(s("Drag a corner to size the runway, drag inside to move it, drag the end handle to turn it."))
+                dz.runwayGeometry?.let { g -> FieldLabel(s("Runway"), runwayText(g, state)) }
+                ChipButton(s("Remove runway"), fontSize = 12) {
+                    engine.updateDropzone { it.copy(runway = null) }
+                    placingRunway = false
+                }
+            }
             Note(s("Drag to move · pinch to size · two fingers to turn"))
             Note(s("Turn the picture so its north points to N"))
             FieldLabel(s("Picture width"), "${state.units.distanceText(dz.widthMeters)} ${state.units.distanceSymbol}")
@@ -146,8 +230,9 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
                 ChipButton(s("Zoom out"), fontSize = 11) { ppm = (ppm / 1.5f).coerceIn(0.02f, 50f) }
                 ChipButton(s("Zoom in"), fontSize = 11) { ppm = (ppm * 1.5f).coerceIn(0.02f, 50f) }
             }
-            ChipButton(s("Measure"), isOn = measuring, fillsWidth = true) {
+            ChipButton(s("Measure"), isOn = measuring, fillsWidth = true, isDisabled = image == null) {
                 measuring = !measuring
+                if (measuring) placingRunway = false
                 points.clear()
             }
             if (measuring) {
@@ -178,6 +263,136 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, onDone: () -> Unit) 
     }
 }
 
+
+/**
+ * The picture on screen: its centre, its width in pixels and its turn
+ * (counter-clockwise on screen); fractions are of the picture's width
+ * from its centre, x right and y down in the picture.
+ */
+private class PictureFrame(val at: Offset, val widthPx: Float, rotationDegrees: Double) {
+    private val c = cos(rotationDegrees * DEG).toFloat()
+    private val s = sin(rotationDegrees * DEG).toFloat()
+
+    fun screen(f: Offset) = Offset(at.x + widthPx * (f.x * c + f.y * s), at.y + widthPx * (-f.x * s + f.y * c))
+
+    fun fraction(point: Offset): Offset {
+        val dx = (point.x - at.x) / max(widthPx, 0.001f)
+        val dy = (point.y - at.y) / max(widthPx, 0.001f)
+        return Offset(dx * c - dy * s, dx * s + dy * c)
+    }
+}
+
+private enum class RunwayHandleKind { BODY, TURN, CORNER }
+private class RunwayHandle(val kind: RunwayHandleKind, val corner: Int = 0)
+private class RunwayDrag(val handle: RunwayHandle, val start: RunwayPlacement, val startFraction: Offset)
+
+private const val HANDLE_RADIUS = 24
+/** How far beyond the runway's far end the turn handle sits, in dp. */
+private const val TURN_STEM = 40
+
+/** A first runway: 300 m by 30 m, or smaller on a small picture, level on the screen and centred on the target. */
+private fun defaultRunway(d: DropzoneSettings): RunwayPlacement {
+    val width = max(d.widthMeters, 1.0)
+    val theta = d.rotationDegrees * DEG
+    val e = d.eastOffsetMeters
+    val so = d.southOffsetMeters
+    return RunwayPlacement(
+        centreX = (-e * cos(theta) + so * sin(theta)) / width,
+        centreY = (-e * sin(theta) - so * cos(theta)) / width,
+        length = min(300.0, width * 0.6) / width,
+        width = max(30.0, width * 0.02) / width,
+        angleDegrees = d.rotationDegrees,
+    )
+}
+
+/** Unit vectors along and across the runway in the picture's frame. */
+private fun runwayAxes(r: RunwayPlacement): Pair<Offset, Offset> {
+    val phi = r.angleDegrees * DEG
+    return Offset(cos(phi).toFloat(), sin(phi).toFloat()) to Offset(-sin(phi).toFloat(), cos(phi).toFloat())
+}
+
+/** The corners as picture fractions: far right, far left, near left and near right, "far" along the runway's angle. */
+private fun runwayCorners(r: RunwayPlacement): List<Offset> {
+    val (along, across) = runwayAxes(r)
+    val l = (r.length / 2).toFloat()
+    val w = (r.width / 2).toFloat()
+    return listOf(1f to 1f, 1f to -1f, -1f to -1f, -1f to 1f).map { (a, b) ->
+        Offset(r.centreX.toFloat() + along.x * l * a + across.x * w * b, r.centreY.toFloat() + along.y * l * a + across.y * w * b)
+    }
+}
+
+private fun midpoint(a: Offset, b: Offset) = Offset((a.x + b.x) / 2, (a.y + b.y) / 2)
+
+private fun unit(a: Offset, b: Offset): Offset {
+    val d = b - a
+    val length = max(d.getDistance(), 0.001f)
+    return Offset(d.x / length, d.y / length)
+}
+
+/** The turn handle on screen: beyond the middle of the far end. */
+private fun turnHandlePoint(corners: List<Offset>, stem: Float): Offset {
+    val far = midpoint(corners[0], corners[1])
+    val along = unit(midpoint(corners[2], corners[3]), far)
+    return Offset(far.x + along.x * stem, far.y + along.y * stem)
+}
+
+private fun androidx.compose.ui.input.pointer.PointerInputScope.runwayHandle(point: Offset, runway: RunwayPlacement, frame: PictureFrame): RunwayHandle {
+    val r = HANDLE_RADIUS.dp.toPx()
+    val corners = runwayCorners(runway).map { frame.screen(it) }
+    val turn = turnHandlePoint(corners, TURN_STEM.dp.toPx())
+    if ((point - turn).getDistance() <= r) return RunwayHandle(RunwayHandleKind.TURN)
+    var best = -1
+    var bestDistance = Float.MAX_VALUE
+    for ((i, c) in corners.withIndex()) {
+        val d = (point - c).getDistance()
+        if (d <= r && d < bestDistance) { best = i; bestDistance = d }
+    }
+    return if (best >= 0) RunwayHandle(RunwayHandleKind.CORNER, best) else RunwayHandle(RunwayHandleKind.BODY)
+}
+
+/**
+ * A corner drag keeps the opposite corner where it is and sizes the runway
+ * to the finger; a drag inside moves it; the turn handle swings the far
+ * end round the centre.
+ */
+private fun runwayMoved(drag: RunwayDrag, fraction: Offset, pictureWidthMeters: Double): RunwayPlacement {
+    val start = drag.start
+    val widthMeters = max(pictureWidthMeters, 1.0)
+    return when (drag.handle.kind) {
+        RunwayHandleKind.BODY -> start.copy(
+            centreX = start.centreX + (fraction.x - drag.startFraction.x),
+            centreY = start.centreY + (fraction.y - drag.startFraction.y),
+        )
+        RunwayHandleKind.TURN -> {
+            val dx = fraction.x - start.centreX
+            val dy = fraction.y - start.centreY
+            if (hypot(dx, dy) > 0.001) start.copy(angleDegrees = atan2(dy, dx) / DEG) else start
+        }
+        RunwayHandleKind.CORNER -> {
+            val fixed = runwayCorners(start)[(drag.handle.corner + 2) % 4]
+            val (along, across) = runwayAxes(start)
+            val dx = fraction.x - fixed.x
+            val dy = fraction.y - fixed.y
+            val u = dx * along.x + dy * along.y
+            val v = dx * across.x + dy * across.y
+            val length = max(abs(u).toDouble(), RunwayPlacement.MINIMUM_LENGTH_METERS / widthMeters)
+            val width = max(abs(v).toDouble(), RunwayPlacement.MINIMUM_WIDTH_METERS / widthMeters)
+            val su = if (u < 0) -1 else 1
+            val sv = if (v < 0) -1 else 1
+            start.copy(
+                length = length,
+                width = width,
+                centreX = fixed.x + along.x * su * length / 2 + across.x * sv * width / 2,
+                centreY = fixed.y + along.y * su * length / 2 + across.y * sv * width / 2,
+            )
+        }
+    }
+}
+
+private fun runwayText(g: RunwayGeometry, state: UiState): String {
+    val u = state.units
+    return "${u.distanceText(g.lengthMeters)} × ${u.distanceText(g.widthMeters)} ${u.distanceSymbol} · ${Math.round(g.headingDegrees) % 360}°"
+}
 
 /** A fixed north arrow: a red north half, a white south half and the letter N above. */
 @Composable

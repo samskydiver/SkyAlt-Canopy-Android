@@ -319,7 +319,46 @@ object Textures {
         return ids[0]
     }
 
+    /** Pixels as they are, not premultiplied, for soft alpha drawn with SRC_ALPHA blending. */
+    fun uploadRaw(raw: RawTexture, repeat: Boolean): Int {
+        val ids = IntArray(1)
+        GLES30.glGenTextures(1, ids, 0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, ids[0])
+        val wrap = if (repeat) GLES30.GL_REPEAT else GLES30.GL_CLAMP_TO_EDGE
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, wrap)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, wrap)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR_MIPMAP_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        val buffer = ByteBuffer.allocateDirect(raw.rgba.size).order(ByteOrder.nativeOrder())
+        buffer.put(raw.rgba)
+        buffer.position(0)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+        GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA, raw.width, raw.height, 0, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
+        GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D)
+        return ids[0]
+    }
+
     fun delete(id: Int) {
         if (id != 0) GLES30.glDeleteTextures(1, intArrayOf(id), 0)
+    }
+}
+
+/** A model part on the GPU: its mesh, its place in the model, colour, lighting and texture (0 for none). */
+class GpuPart(val mesh: GpuMesh, val model: FloatArray, val color: FloatArray, val lit: Boolean, val texture: Int) {
+    fun release() {
+        mesh.release()
+        Textures.delete(texture)
+    }
+
+    companion object {
+        fun of(part: ModelPart): GpuPart {
+            val mesh = GpuMesh(if (part.lines) GLES30.GL_LINES else GLES30.GL_TRIANGLES).apply { set(part.mesh) }
+            val texture = part.texture?.let { Textures.upload(it, repeat = false, mipmap = true) }
+                ?: part.raw?.let { Textures.uploadRaw(it, repeat = true) }
+                ?: 0
+            return GpuPart(mesh, part.model, part.color, part.lit, texture)
+        }
+
+        fun of(parts: List<ModelPart>) = parts.map { of(it) }
     }
 }

@@ -116,13 +116,19 @@ class AeroParameters(performance: CanopyPerformance) {
     }
 }
 
-/** The reference pattern: downwind, base with a crab, final into the wind. */
+/**
+ * The reference pattern: downwind, base with a crab, final into the wind
+ * unless [finalHeadingIn] (radians) is given, as for a crosswind or a
+ * downwind landing; the legs end at [target].
+ */
 class PatternGeometry(
     hand: PatternHand,
     aero: AeroParameters,
     windSpeed: Double,
     windDirectionDegrees: Double,
     altitudes: PatternAltitudes,
+    finalHeadingIn: Double? = null,
+    target: Vec3 = SimConstants.TARGET,
 ) {
     /** Downwind entry, base turn, final turn and the target, with altitude. */
     val points: List<Vec3>
@@ -134,17 +140,15 @@ class PatternGeometry(
     val finalLength: Double
 
     init {
-        val target = SimConstants.TARGET
-        val v = aero.trimForwardSpeed
         val sink = aero.trimSinkRate
-        val w = windSpeed
-        finalHeading = windDirectionDegrees * DEG
+        val wind = Compass.wind(windSpeed, windDirectionDegrees)
+        finalHeading = finalHeadingIn ?: (windDirectionDegrees * DEG)
         val sign = if (hand == PatternHand.RIGHT) -1.0 else 1.0
         baseHeading = finalHeading + sign * PI / 2
         downwindHeading = finalHeading + PI
-        finalLength = altitudes.final * max(0.3, v - w) / sink
-        baseLength = max(0.0, altitudes.base - altitudes.final) * sqrt(max(0.09, v * v - w * w)) / sink
-        downwindLength = max(0.0, altitudes.downwind - altitudes.base) * (v + w) / sink
+        finalLength = altitudes.final * groundSpeed(finalHeading, aero, wind) / sink
+        baseLength = max(0.0, altitudes.base - altitudes.final) * groundSpeed(baseHeading, aero, wind) / sink
+        downwindLength = max(0.0, altitudes.downwind - altitudes.base) * groundSpeed(downwindHeading, aero, wind) / sink
         val finalPoint = target - Compass.direction(finalHeading) * finalLength
         val basePoint = finalPoint - Compass.direction(baseHeading) * baseLength
         val downwindPoint = basePoint - Compass.direction(downwindHeading) * downwindLength
@@ -155,20 +159,49 @@ class PatternGeometry(
             Vec3(target.x, 0.0, target.z),
         )
     }
+
+    companion object {
+        /**
+         * Ground speed along a leg flown at trim on [heading]: the airspeed
+         * less what the crab into the crosswind takes, plus the wind along
+         * the leg.
+         */
+        fun groundSpeed(heading: Double, aero: AeroParameters, wind: Vec3): Double {
+            val v = aero.trimForwardSpeed
+            val d = Compass.direction(heading)
+            val along = wind.x * d.x + wind.z * d.z
+            val across = hypot(wind.x - along * d.x, wind.z - along * d.z)
+            return max(0.3, sqrt(max(0.09, v * v - across * across)) + along)
+        }
+
+        /** How far a leg on [heading] runs while [altitudeLoss] metres are lost at trim. */
+        fun legLength(altitudeLoss: Double, heading: Double, aero: AeroParameters, wind: Vec3) =
+            max(0.0, altitudeLoss) * groundSpeed(heading, aero, wind) / aero.trimSinkRate
+    }
 }
 
 /** Where a run begins and which way it faces. */
 data class StartPlacement(val position: Vec3, val heading: Double)
 
+/** The reference pattern of this setup, with the hand it was last flown on even while the pattern is off. */
 fun SimulatorConfiguration.patternGeometry(aero: AeroParameters, hand: PatternHand = this.hand) =
-    PatternGeometry(hand, aero, windSpeed, windDirectionDegrees, patternAltitudes)
+    PatternGeometry(hand, aero, windSpeed, windDirectionDegrees, patternAltitudes, finalHeadingDegrees?.let { it * DEG })
 
-/** A chosen start point faces the pattern's entry (or the target without one). */
+/**
+ * A chosen start point faces the pattern's entry (or the target without
+ * one), or [SimulatorConfiguration.startHeadingDegrees]; the default start
+ * sits the run-in before the downwind entry. A scene may start at the
+ * final turn instead.
+ */
 fun SimulatorConfiguration.start(aero: AeroParameters): StartPlacement {
     val pattern = patternGeometry(aero)
     val entry = pattern.points[0]
     val target = SimConstants.TARGET
     val altitude = startAltitudeMeters + 1
+    if (startsAtFinalTurn) {
+        val turn = pattern.points[2]
+        return StartPlacement(Vec3(turn.x, altitude, turn.z), pattern.finalHeading)
+    }
     val east = startEastMeters
     val south = startSouthMeters
     if (east == null || south == null) {
@@ -176,6 +209,7 @@ fun SimulatorConfiguration.start(aero: AeroParameters): StartPlacement {
         return StartPlacement(Vec3(entry.x - runInMeters * d.x, altitude, entry.z - runInMeters * d.z), pattern.downwindHeading)
     }
     val position = Vec3(target.x + east, altitude, target.z + south)
+    startHeadingDegrees?.let { return StartPlacement(position, it * DEG) }
     val goal = if (referencePattern.hand == null) target else entry
     val dx = goal.x - position.x
     val dz = goal.z - position.z
@@ -200,6 +234,9 @@ data class FlightFrame(
     val heading: Double,
     val turnRate: Double,
     val landed: Boolean,
+    val turbulence: Double = 0.0,
+    val wakeCollapse: Double = 0.0,
+    val accident: Boolean = false,
 ) {
     val altitude get() = max(0.0, position.y - 1)
     val groundSpeed get() = hypot(velocity.x, velocity.z)
@@ -226,6 +263,9 @@ data class FlightFrame(
                 heading = lerpAngle(a.heading, b.heading, u),
                 turnRate = mix(a.turnRate, b.turnRate),
                 landed = b.landed && u > 0.99,
+                turbulence = mix(a.turbulence, b.turbulence),
+                wakeCollapse = mix(a.wakeCollapse, b.wakeCollapse),
+                accident = b.accident && u > 0.99,
             )
         }
 
@@ -258,7 +298,14 @@ object FlightRecording {
 }
 
 /** The integrated state of the canopy and jumper. */
-class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
+class FlightState private constructor(start: StartPlacement, aero: AeroParameters, wind: Vec3) {
+    /** A run starts at the configuration's start point, flying at trim. */
+    constructor(configuration: SimulatorConfiguration, aero: AeroParameters) :
+        this(configuration.start(aero), aero, Compass.wind(configuration.windSpeed, configuration.windDirectionDegrees))
+
+    /** A canopy put in the air at [position], flying [heading] at trim. */
+    constructor(position: Vec3, heading: Double, aero: AeroParameters, wind: Vec3) : this(StartPlacement(position, heading), aero, wind)
+
     var position: Vec3
     var velocity: Vec3
     var bank = 0.0
@@ -277,11 +324,19 @@ class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
     var distance = 0.0
     var heading: Double
     var turnRate = 0.0
+    /** The turbulence the canopy is flying through, 0…1: a wake rolls the wing about and shakes its lift. */
+    var turbulence = 0.0
+    /** Seconds of strong turbulence, which empty the cells; they refill in about two seconds of calm air. */
+    var wakeCollapseSeconds = 0.0
+    /** How far the wake has collapsed the wing, 0…1. */
+    var wakeCollapse = 0.0
+    /** The run ended in a collision: nothing moves any more. */
+    var accident = false
+    /** Phases of the gusts, so every run shakes differently. */
+    private val gustPhase = DoubleArray(4) { kotlin.random.Random.nextDouble(0.0, 2 * PI) }
 
     init {
-        val start = configuration.start(aero)
         val d = Compass.direction(start.heading)
-        val wind = Compass.wind(configuration.windSpeed, configuration.windDirectionDegrees)
         position = start.position
         velocity = Vec3(aero.trimForwardSpeed * d.x + wind.x, -aero.trimSinkRate, aero.trimForwardSpeed * d.z + wind.z)
         liftCoefficient = aero.liftCoefficient0
@@ -290,12 +345,17 @@ class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
         heading = start.heading
     }
 
-    fun step(dt: Double, leftBrake: Double, rightBrake: Double, p: AeroParameters, w: Vec3, studentMode: Boolean) {
-        if (landed) return
+    fun step(dt: Double, leftBrake: Double, rightBrake: Double, p: AeroParameters, w: Vec3, studentMode: Boolean, turbulence: Double = 0.0) {
+        if (landed || accident) return
         val da = rightBrake - leftBrake
         val ds = min(leftBrake, rightBrake) + p.differentialEffectiveness * abs(da)
-        val bankTarget = (p.maximumBank * da).clamp(-p.maximumBank, p.maximumBank)
-        bank += (bankTarget - bank) * (1 - exp(-dt / p.bankTimeConstant))
+        // Turbulence from a wake rolls the wing about, faster than the
+        // toggles do, shakes its lift and yaws it; held in strong
+        // turbulence the cells empty.
+        this.turbulence = turbulence
+        val gust = gust(time, gustPhase)
+        val bankTarget = (p.maximumBank * da).clamp(-p.maximumBank, p.maximumBank) + turbulence * 0.5 * gust[0]
+        bank += (bankTarget - bank) * (1 - exp(-dt / (p.bankTimeConstant * (1 - 0.6 * turbulence))))
 
         var v = velocity
         val va = Vec3(v.x - w.x, v.y, v.z - w.z)
@@ -314,10 +374,18 @@ class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
             max(developed, stallSeconds - dt * SimConstants.STALL_RECOVERY_RATE)
         }
         stall = smoothStep(phase, 2 * phase, stallSeconds)
-        collapse = smoothStep(2 * phase, 3 * phase, stallSeconds)
+        val gustThreshold = 0.55
+        wakeCollapseSeconds = if (turbulence > gustThreshold) {
+            min(2.0, wakeCollapseSeconds + dt * 2 * (turbulence - gustThreshold) / (1 - gustThreshold))
+        } else {
+            max(0.0, wakeCollapseSeconds - dt)
+        }
+        wakeCollapse = smoothStep(0.4, 1.6, wakeCollapseSeconds)
+        collapse = max(smoothStep(2 * phase, 3 * phase, stallSeconds), wakeCollapse)
         val (cl, cd) = p.coefficients(ds, stall)
         val bankCut = 1 - p.bankDive * (1 - cos(bank))
-        val effectiveLift = max(0.05, cl * bankCut * (1 - 0.95 * collapse) - p.pitchRateLiftLoss * glideAngleRate)
+        val liftShake = 1 - 0.35 * turbulence * (0.5 + 0.5 * gust[1])
+        val effectiveLift = max(0.05, cl * bankCut * liftShake * (1 - 0.95 * collapse) - p.pitchRateLiftLoss * glideAngleRate)
         val q = 0.5 * p.airDensity * speed * speed * p.wingArea
         val lift = q * effectiveLift
         val drag = q * (cd * (1 - 0.5 * collapse) + 0.25 * collapse)
@@ -326,7 +394,7 @@ class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
         acceleration = Vec3(acceleration.x, acceleration.y - p.gravity, acceleration.z)
         v = v + acceleration * dt
         if (p.maximumBank > 0 && p.yawGain > 0) {
-            val yaw = p.yawGain * speed * (bank / p.maximumBank) * dt
+            val yaw = (p.yawGain * speed * (bank / p.maximumBank) + turbulence * 0.5 * gust[2]) * dt
             val air = Vec3(v.x - w.x, v.y, v.z - w.z)
             val tx = air.x * cos(yaw) - air.z * sin(yaw)
             val tz = air.x * sin(yaw) + air.z * cos(yaw)
@@ -348,7 +416,7 @@ class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
         if (change < -PI) change += 2 * PI
         turnRate += (change / dt - turnRate) * (1 - exp(-dt / 0.3))
         heading = newHeading
-        val pitchTarget = (-12 + 26 * ds + 10 * stall) * DEG + 0.5 * (glideAngle - p.trimGlideAngle)
+        val pitchTarget = (-12 + 26 * ds + 10 * stall) * DEG + 0.5 * (glideAngle - p.trimGlideAngle) + turbulence * 0.3 * gust[3]
         pitch += (pitchTarget - pitch) * (1 - exp(-dt / 0.5))
         velocity = v
 
@@ -361,9 +429,33 @@ class FlightState(configuration: SimulatorConfiguration, aero: AeroParameters) {
     fun frame(leftBrake: Double, rightBrake: Double) = FlightFrame(
         time, position, velocity, bank, pitch, leftBrake, rightBrake, stall, collapse,
         liftCoefficient, loadFactor, distance, heading, turnRate, landed,
+        turbulence, wakeCollapse, accident,
     )
 
+    /** Where the canopy's centre is: up the lines from the jumper, swung out by the bank. */
+    val canopyCentre: Vec3 get() = canopyCentre(position, heading, pitch, bank)
+
     companion object {
+        /** Smooth gusts between −1 and 1, different in each of four channels. */
+        fun gust(t: Double, p: DoubleArray): DoubleArray {
+            fun channel(a: Double, b: Double, phase: Double) = 0.65 * sin(a * t + phase) + 0.35 * sin(b * t + 2.1 * phase)
+            return doubleArrayOf(channel(6.1, 10.7, p[0]), channel(7.3, 12.9, p[1]), channel(5.2, 9.1, p[2]), channel(8.4, 13.6, p[3]))
+        }
+
+        /** The point the lines' length above [position], turned by heading, pitch and bank as the rig is drawn. */
+        fun canopyCentre(position: Vec3, heading: Double, pitch: Double, bank: Double): Vec3 {
+            // R = Ry(−heading) · Rx(pitch) · Rz(−bank) applied to (0, L, 0).
+            val l = com.skyalt.canopy.scene.CanopyMeshShape.LINE_LENGTH
+            // Rz(−bank)·(0, L, 0) = (L sin bank, L cos bank, 0)
+            val x1 = l * sin(bank); val y1 = l * cos(bank)
+            // Rx(pitch)
+            val y2 = y1 * cos(pitch); val z2 = y1 * sin(pitch)
+            // Ry(−heading): x' = x cos h' + z sin h', z' = −x sin h' + z cos h', h' = −heading
+            val h = -heading
+            val x3 = x1 * cos(h) + z2 * sin(h); val z3 = -x1 * sin(h) + z2 * cos(h)
+            return Vec3(position.x + x3, position.y + y2, position.z + z3)
+        }
+
         /** Seconds for the first full-toggle 360° from full flight in no wind. */
         fun fullToggleTurnSeconds(configuration: SimulatorConfiguration, aero: AeroParameters): Double {
             val setup = configuration.copy(startAltitudeMeters = 3000.0, windSpeed = 0.0)

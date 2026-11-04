@@ -66,7 +66,7 @@ class SimulatorActivity : ComponentActivity() {
 
     private val main = Handler(Looper.getMainLooper())
     private var uiState by mutableStateOf(UiState())
-    private var drawer by mutableStateOf<SimDrawer?>(SimDrawer.SETTINGS)
+    private var drawer by mutableStateOf<SimDrawer?>(null)
     private var editingDropzone by mutableStateOf(false)
     private var gate by mutableStateOf(Gate.LOADING)
     private lateinit var engine: SimulatorEngine
@@ -123,7 +123,7 @@ class SimulatorActivity : ComponentActivity() {
         pro = AppServices.pro(this)
         trial = AppServices.trial(this)
         language = AppServices.language(this)
-        // A visit begins at the setup, with the run waiting for Play.
+        // A visit begins on the scene page, then at the setup, with the run waiting for Play.
         engine.pause()
         gate = Gate.OPEN
 
@@ -147,6 +147,7 @@ class SimulatorActivity : ComponentActivity() {
                     startActivity(Intent(Settings.ACTION_SETTINGS))
                 }
             },
+            onLeave = { finish() },
         )
 
         setContent {

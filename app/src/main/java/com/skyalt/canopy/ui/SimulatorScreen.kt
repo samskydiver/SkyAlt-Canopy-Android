@@ -45,6 +45,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.compose.BackHandler
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.skyalt.canopy.model.SimulatorMode
 import com.skyalt.canopy.sim.CanopyGLView
 import com.skyalt.canopy.sim.FlightStatus
 import com.skyalt.canopy.sim.MotionCaptureController
@@ -54,7 +58,7 @@ import com.skyalt.canopy.sim.SimulatorTrial
 import com.skyalt.canopy.sim.UiState
 
 /** The panels that slide in from the right edge of the simulator. */
-enum class SimDrawer(val titleKey: String) { SETTINGS("Settings"), MOTION_CAPTURE("Motion capture") }
+enum class SimDrawer(val titleKey: String) { SETTINGS("Settings"), PATH_STYLES("Path styles"), MOTION_CAPTURE("Motion capture") }
 
 /** What the activity hands the simulator's interface. */
 class SimulatorHost(
@@ -69,6 +73,8 @@ class SimulatorHost(
     val onToggleCamera: () -> Unit,
     val onOpenAppSettings: () -> Unit,
     val onOpenCastSettings: () -> Unit,
+    /** Leaves the simulator. */
+    val onLeave: () -> Unit,
 )
 
 /**
@@ -97,6 +103,52 @@ fun SimulatorScreen(
     var barHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val focus = LocalFocusManager.current
+    // The scene page: open on arrival until a mode is chosen, and again from
+    // the Scenes button. Reached with Back, its own back leaves the simulator.
+    var choosingScenario by rememberSaveable { mutableStateOf(true) }
+    var hasChosenMode by rememberSaveable { mutableStateOf(false) }
+    var pickerLeaves by remember { mutableStateOf(false) }
+    // The picture editor opened to set the runway for the aircraft switch; Done then switches the aircraft on.
+    var editorForRunway by remember { mutableStateOf(false) }
+
+    fun openScenarioPicker(leaving: Boolean) {
+        focus.clearFocus()
+        engine.pause()
+        pickerLeaves = leaving
+        onDrawer(null)
+        choosingScenario = true
+    }
+
+    fun leaveScenarioPicker() {
+        if (!hasChosenMode || pickerLeaves) host.onLeave() else choosingScenario = false
+    }
+
+    fun choose(mode: SimulatorMode) {
+        engine.enter(mode)
+        hasChosenMode = true
+        pickerLeaves = false
+        choosingScenario = false
+        onDrawer(SimDrawer.SETTINGS)
+    }
+
+    fun openDropzoneEditor(forRunway: Boolean) {
+        if (!forRunway && state.dropzoneImage == null) return
+        focus.clearFocus()
+        editorForRunway = forRunway
+        onEditDropzone(true)
+    }
+
+    fun closeDropzoneEditor() {
+        focus.clearFocus()
+        if (editorForRunway && engine.hasRunway()) engine.setAircraftLanding(true)
+        editorForRunway = false
+        onEditDropzone(false)
+    }
+
+    // Back: out of the scene page, else to it on the way out of the simulator.
+    BackHandler(enabled = choosingScenario || (drawer == null && !isCasting && !editingDropzone && !choosingStart && !showingPro)) {
+        if (choosingScenario) leaveScenarioPicker() else openScenarioPicker(leaving = true)
+    }
 
     fun open(which: SimDrawer) {
         if (drawer == which) {
@@ -129,6 +181,7 @@ fun SimulatorScreen(
                             onOpenSettings = { open(SimDrawer.SETTINGS) },
                             onOpenMotionCapture = { open(SimDrawer.MOTION_CAPTURE) },
                             onCast = { onCasting(true) },
+                            onOpenScenarios = { openScenarioPicker(leaving = false) },
                         )
                     }
                     if (showsProfile) {
@@ -169,6 +222,7 @@ fun SimulatorScreen(
                 Drawer(
                     title = s(shown.titleKey),
                     modifier = Modifier.width(drawerWidth),
+                    onBack = if (shown == SimDrawer.PATH_STYLES) ({ onDrawer(SimDrawer.SETTINGS) }) else null,
                     onClose = { focus.clearFocus(); onDrawer(null) },
                 ) {
                     when (shown) {
@@ -179,24 +233,30 @@ fun SimulatorScreen(
                                 language = host.language,
                                 onOpenStartPoint = { choosingStart = true },
                                 onChoosePicture = host.onChoosePicture,
-                                onEditPicture = { onEditDropzone(true) },
+                                onEditPicture = { openDropzoneEditor(forRunway = false) },
                                 onApply = { onDrawer(null) },
+                                onOpenPathStyles = { onDrawer(SimDrawer.PATH_STYLES) },
+                                onSetRunway = { if (!isCasting) openDropzoneEditor(forRunway = true) },
                                 pictureLocked = isCasting,
                             )
                         }
+                        SimDrawer.PATH_STYLES -> PathStylePanel(state, engine)
                         SimDrawer.MOTION_CAPTURE -> MocapPanel(capture, host.onToggleCamera, host.onOpenAppSettings)
                     }
                 }
             }
         }
 
-        if (editingDropzone && state.dropzoneImage != null && !isCasting) {
-            DropzoneEditor(state, engine) { focus.clearFocus(); onEditDropzone(false) }
+        if (editingDropzone && (state.dropzoneImage != null || editorForRunway) && !isCasting) {
+            DropzoneEditor(state, engine, startsWithRunway = editorForRunway) { closeDropzoneEditor() }
         }
         if (choosingStart) {
             Box(Modifier.fillMaxSize().imePadding()) {
                 StartPointScreen(state, engine) { choosingStart = false }
             }
+        }
+        if (choosingScenario) {
+            ScenarioPicker(state, onChoose = { choose(it) }, onBack = { leaveScenarioPicker() })
         }
         if (showingPro) {
             ProUpgradeScreen(host.pro, trialUsedUp = false, onClose = { showingPro = false })
@@ -215,6 +275,7 @@ private fun Hud(
     onOpenSettings: () -> Unit,
     onOpenMotionCapture: () -> Unit,
     onCast: () -> Unit,
+    onOpenScenarios: () -> Unit,
 ) {
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout)) {
         Column(Modifier.fillMaxSize()) {
@@ -234,7 +295,7 @@ private fun Hud(
                     AltimeterFace(state.display.altitude, state.units)
                 }
                 val showsStart = state.isPaused && !drawerOpen && state.replay == null &&
-                    state.display.status != FlightStatus.Landed && !state.showsLandingCard
+                    state.display.status != FlightStatus.Landed && !state.showsLandingCard && state.accident == null
                 if (showsStart) {
                     Box(Modifier.align(Alignment.Center)) { CentreStartButton { engine.togglePause() } }
                 }
@@ -247,7 +308,7 @@ private fun Hud(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TransportButtons(state, engine)
                     Spacer(Modifier.weight(1f))
-                    ToolButtons(state, engine, capture.active, false, onOpenSettings, onOpenMotionCapture, onCast, stacked = compactTools)
+                    ToolButtons(state, engine, capture.active, false, onOpenSettings, onOpenMotionCapture, onCast, stacked = compactTools, onOpenScenarios = onOpenScenarios)
                 }
             }
         }
@@ -255,15 +316,29 @@ private fun Hud(
         if (state.showsLandingCard && touchdown != null) {
             Box(Modifier.align(Alignment.Center)) { LandingCard(state, touchdown, engine) }
         }
+        val accident = state.accident
+        if (accident != null && state.replay == null) {
+            Box(Modifier.align(Alignment.Center)) { AccidentCard(state, accident, engine) }
+        }
     }
 }
 
 /** The drawer's chrome: a heading with a close button over a scrolling column of blocks. */
 @Composable
-fun Drawer(title: String, modifier: Modifier = Modifier, onClose: () -> Unit, content: @Composable () -> Unit) {
+fun Drawer(title: String, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null, onClose: () -> Unit, content: @Composable () -> Unit) {
     val p = LocalPalette.current
     Column(modifier.fillMaxHeight().background(p.background).windowInsetsPadding(WindowInsets.displayCutout)) {
         Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // A page reached from another drawer: a chevron back to it.
+            if (onBack != null) {
+                Box(
+                    Modifier.size(30.dp).background(p.surface2, CircleShape).noRippleClick(onBack),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = LocalStrings.current("Back"), tint = p.foreground, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.width(8.dp))
+            }
             Text(title.uppercase(), style = displayStyle(15.sp), color = p.muted, letterSpacing = 1.3.sp, modifier = Modifier.weight(1f))
             Box(
                 Modifier.size(30.dp).background(p.surface2, CircleShape).noRippleClick(onClose),

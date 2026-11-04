@@ -58,6 +58,8 @@ import com.skyalt.canopy.scene.CameraPreset
 import com.skyalt.canopy.sim.FlightStatus
 import com.skyalt.canopy.sim.SimulatorEngine
 import com.skyalt.canopy.sim.UiState
+import com.skyalt.canopy.model.Accident
+import androidx.compose.material.icons.automirrored.filled.List
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -141,6 +143,9 @@ fun statusLabel(status: FlightStatus, s: Strings): String = when (status) {
     FlightStatus.LeftTurn -> s("Left turn")
     FlightStatus.RightTurn -> s("Right turn")
     is FlightStatus.Brakes -> s.format("Brakes %d%%", status.percent)
+    FlightStatus.Turbulence -> s("Turbulence")
+    FlightStatus.WakeCollapse -> s("Wake collapse")
+    FlightStatus.Collision -> s("Collision")
 }
 
 @Composable
@@ -150,6 +155,9 @@ private fun StatusBadge(status: FlightStatus) {
         FlightStatus.StallOnset -> hex(0xd9581f) to Color.White
         FlightStatus.FullStall -> hex(0xc0281e) to Color.White
         FlightStatus.DeepBrakes -> hex(0xe3a21a) to hex(0x1b1100)
+        FlightStatus.Turbulence -> hex(0x5c6bc0) to Color.White
+        FlightStatus.WakeCollapse -> hex(0x8e1b6b) to Color.White
+        FlightStatus.Collision -> hex(0x111111) to Color.White
         FlightStatus.Landed, FlightStatus.Replay -> Palette.ink to Color.White
         else -> Palette.ink.copy(alpha = 0.08f) to Palette.ink
     }
@@ -170,7 +178,10 @@ fun ModeChip(state: UiState) {
     val s = LocalStrings.current
     val c = state.configuration
     val weight = state.units.weightValue(c.exitWeightKilograms).roundToInt()
-    val text = "${s(c.canopyType.titleKey)} · $weight ${state.units.weightSymbol} · ${c.canopyAreaSquareFeet.roundToInt()} ft²"
+    val canopy = "${s(c.canopyType.titleKey)} · $weight ${state.units.weightSymbol} · ${c.canopyAreaSquareFeet.roundToInt()} ft²"
+    // The scene being flown is named in front of the canopy.
+    val scenario = state.scenario
+    val text = if (scenario != null) "${scenario.number} · ${s(scenario.titleKey)} · $canopy" else canopy
     Text(
         text.uppercase(),
         style = displayStyle(13.sp),
@@ -321,7 +332,7 @@ private fun BrakeColumn(left: Boolean, state: UiState, trackHeight: Dp, interact
 @Composable
 fun TransportButtons(state: UiState, engine: SimulatorEngine, iconOnly: Boolean = false) {
     val s = LocalStrings.current
-    val landed = state.display.status == FlightStatus.Landed
+    val landed = state.display.status == FlightStatus.Landed || state.accident != null
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         ChipButton(
             if (state.isPaused || landed) s("Start run") else s("Pause"),
@@ -353,9 +364,14 @@ fun ToolButtons(
     onOpenMotionCapture: () -> Unit,
     onToggleCast: () -> Unit,
     stacked: Boolean = false,
+    /** Opens the scene page; none on the casting controls. */
+    onOpenScenarios: (() -> Unit)? = null,
 ) {
     val s = LocalStrings.current
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (onOpenScenarios != null) {
+            ChipButton(s("Scenes"), style = ChipStyle.VIEWPORT, icon = Icons.AutoMirrored.Filled.List, fontSize = 12, stacked = stacked, onClick = onOpenScenarios)
+        }
         val title = when (state.cameraPreset) {
             CameraPreset.CHASE -> s("Chase")
             CameraPreset.SIDE -> s("Side")
@@ -466,6 +482,41 @@ fun LandingCard(state: UiState, touchdown: Touchdown, engine: SimulatorEngine) {
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ChipButton(s("Replay"), style = ChipStyle.VIEWPORT, isOn = true, fontSize = 14) { engine.enterReplay() }
+            ChipButton(s("Reset"), style = ChipStyle.VIEWPORT, isOn = true, fontSize = 14) { engine.resetRun() }
+        }
+    }
+}
+
+/** A collision's verdict: what was hit, where and when, and the way on. The run is over. */
+@Composable
+fun AccidentCard(state: UiState, accident: Accident, engine: SimulatorEngine) {
+    val s = LocalStrings.current
+    val u = state.units
+    val cause = when (accident.kind) {
+        Accident.Kind.CANOPY -> s("Collided with another canopy")
+        Accident.Kind.AIRCRAFT -> s("Flew into the aircraft")
+        Accident.Kind.PERSON -> s("Hit a person on the ground")
+        Accident.Kind.BUILDING -> s("Flew into the hangar")
+    }
+    Column(
+        Modifier
+            .padding(24.dp)
+            .shadow(15.dp, RoundedCornerShape(8.dp))
+            .background(Color.White.copy(alpha = 0.94f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 20.dp, vertical = 14.dp)
+            .widthIn(min = 240.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(s("Severe accident"), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = hex(0xc0281e), textAlign = TextAlign.Center)
+        Text(cause, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Palette.ink, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 280.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LandingRow(s("Altitude"), "${u.distanceText(accident.altitude)} ${u.distanceSymbol}")
+            LandingRow(s("Time"), String.format(Locale.US, "%.1f s", accident.time))
+        }
+        Text(s("The simulation has stopped."), fontSize = 12.sp, color = hex(0x3d4b5c))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ChipButton(s("Replay"), style = ChipStyle.VIEWPORT, isOn = true, isDisabled = !state.canReplay, fontSize = 14) { engine.enterReplay() }
             ChipButton(s("Reset"), style = ChipStyle.VIEWPORT, isOn = true, fontSize = 14) { engine.resetRun() }
         }
     }

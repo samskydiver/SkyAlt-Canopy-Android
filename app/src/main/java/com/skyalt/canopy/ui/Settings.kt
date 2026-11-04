@@ -56,10 +56,21 @@ fun SettingsContent(
     onChoosePicture: () -> Unit,
     onEditPicture: () -> Unit,
     onApply: () -> Unit,
+    onOpenPathStyles: () -> Unit,
+    onSetRunway: () -> Unit,
     pictureLocked: Boolean = false,
 ) {
     val s = LocalStrings.current
     val p = LocalPalette.current
+    // A scene shows only what it lets the jumper change.
+    val scenario = state.scenario
+    if (scenario != null) {
+        ScenarioPanel(state, engine, scenario, onApply)
+        if (scenario.allowsTraffic) TrafficPanel(state, engine, onSetRunway = {})
+        if (scenario.showsClouds) CloudPanel(state, engine)
+        if (scenario.showsPaths) PathStyleEntry(onOpenPathStyles)
+        return
+    }
     SetupPanel(state, engine, onOpenStartPoint, onApply)
     Block(s("Language")) {
         // Each language is named in itself, so the way back is readable whichever is on.
@@ -84,7 +95,9 @@ fun SettingsContent(
             )
         }
     }
-    PathStylePanel(state, engine)
+    TrafficPanel(state, engine, onSetRunway)
+    CloudPanel(state, engine)
+    PathStyleEntry(onOpenPathStyles)
     Block(s("Dropzone aerial view")) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val shape = RoundedCornerShape(6.dp)
@@ -218,7 +231,7 @@ private fun startSummary(state: UiState, s: Strings): String {
 
 /** Colour and thickness of the pattern, its ground projection, the trail and past runs. */
 @Composable
-private fun PathStylePanel(state: UiState, engine: SimulatorEngine) {
+fun PathStylePanel(state: UiState, engine: SimulatorEngine) {
     val s = LocalStrings.current
     val style = state.pathStyle
     Block(s("Path styles")) {

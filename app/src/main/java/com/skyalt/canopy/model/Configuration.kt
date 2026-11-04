@@ -76,6 +76,12 @@ data class SimulatorConfiguration(
     val startSouthMeters: Double? = null,
     val windsockEastMeters: Double = 30.0,
     val windsockSouthMeters: Double = 0.0,
+    /** Which way the final leg points, degrees; null lands into the wind. A scene fixes it along a runway. */
+    val finalHeadingDegrees: Double? = null,
+    /** The run starts at the pattern's final turn, at the final leg's altitude (the obstacle scene). Not saved. */
+    val startsAtFinalTurn: Boolean = false,
+    /** A chosen start point faces this way, degrees, instead of the pattern's entry (the aircraft scene). Not saved. */
+    val startHeadingDegrees: Double? = null,
 ) {
     val performance get() = CanopyPerformance(exitWeightKilograms, canopyAreaSquareFeet, canopyType)
 
@@ -98,7 +104,8 @@ data class SimulatorConfiguration(
             hand != other.hand ||
             downwindAltitudeMeters != other.downwindAltitudeMeters ||
             baseAltitudeMeters != other.baseAltitudeMeters ||
-            finalAltitudeMeters != other.finalAltitudeMeters
+            finalAltitudeMeters != other.finalAltitudeMeters ||
+            finalHeadingDegrees != other.finalHeadingDegrees
 
     fun clamped(): SimulatorConfiguration {
         val final = finalAltitudeMeters.clamp(15.0, 1500.0)
@@ -121,6 +128,7 @@ data class SimulatorConfiguration(
             windsockEastMeters = windsockEastMeters.clamp(-2000.0, 2000.0),
             windsockSouthMeters = windsockSouthMeters.clamp(-2000.0, 2000.0),
             hand = referencePattern.hand ?: hand,
+            finalHeadingDegrees = finalHeadingDegrees?.let { normalizedDegrees(Math.rint(it)) },
         )
     }
 
@@ -142,7 +150,26 @@ data class DropzoneSettings(
     val southOffsetMeters: Double = 0.0,
     /** Counter-clockwise seen from above. */
     val rotationDegrees: Double = 0.0,
+    /** The runway drawn on the picture, once one has been set. */
+    val runway: RunwayPlacement? = null,
 ) {
+    /** The runway on the ground, metres from the target, or null until one is set. */
+    val runwayGeometry: RunwayGeometry?
+        get() {
+            val r = runway ?: return null
+            val theta = rotationDegrees * DEG
+            val s = kotlin.math.sin(theta)
+            val c = kotlin.math.cos(theta)
+            val east = eastOffsetMeters + (r.centreX * c + r.centreY * s) * widthMeters
+            val south = southOffsetMeters + (-r.centreX * s + r.centreY * c) * widthMeters
+            return RunwayGeometry(
+                centre = Vec3(east, 0.0, south),
+                headingDegrees = normalizedDegrees(90 + r.angleDegrees - rotationDegrees),
+                lengthMeters = r.length * widthMeters,
+                widthMeters = r.width * widthMeters,
+            )
+        }
+
     fun clamped(): DropzoneSettings {
         var rotation = normalizedDegrees(rotationDegrees)
         if (rotation > 180) rotation -= 360
@@ -174,3 +201,28 @@ data class PathStyleSettings(
         history = history.clamped(),
     )
 }
+
+/**
+ * A runway drawn on the dropzone picture: its centre and size as fractions
+ * of the picture's width, from the picture's centre, and its angle in the
+ * picture, so it stays on the picture's runway while the picture is moved,
+ * sized and turned.
+ */
+data class RunwayPlacement(
+    /** Right of the picture's centre, as a fraction of its width. */
+    val centreX: Double = 0.0,
+    /** Down from the picture's centre, as a fraction of its width. */
+    val centreY: Double = 0.0,
+    val length: Double = 0.5,
+    val width: Double = 0.06,
+    /** Degrees clockwise from the picture's horizontal. */
+    val angleDegrees: Double = 0.0,
+) {
+    companion object {
+        const val MINIMUM_LENGTH_METERS = 50.0
+        const val MINIMUM_WIDTH_METERS = 8.0
+    }
+}
+
+/** A runway on the ground: metres from the target, x east and z south, and the heading of its long axis. */
+data class RunwayGeometry(val centre: Vec3, val headingDegrees: Double, val lengthMeters: Double, val widthMeters: Double)
