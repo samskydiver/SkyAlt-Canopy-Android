@@ -60,12 +60,13 @@ import com.skyalt.canopy.sim.SimulatorEngine
 import com.skyalt.canopy.sim.UiState
 import com.skyalt.canopy.model.Accident
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import java.util.Locale
 import kotlin.math.roundToInt
 
 /** The strip across the top: the readouts, the flight state and the altitude. */
 @Composable
-fun InstrumentBar(state: UiState, modifier: Modifier = Modifier) {
+fun InstrumentBar(state: UiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val s = LocalStrings.current
     val d = state.display
     val units = state.units
@@ -93,6 +94,23 @@ fun InstrumentBar(state: UiState, modifier: Modifier = Modifier) {
             .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (onBack != null) {
+            // Back to the scene page, and from there out of the simulator.
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Palette.ink.copy(alpha = 0.08f))
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = s("Back"),
+                    tint = Palette.ink, modifier = Modifier.size(26.dp),
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+        }
         Row(
             Modifier.weight(1f).horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),

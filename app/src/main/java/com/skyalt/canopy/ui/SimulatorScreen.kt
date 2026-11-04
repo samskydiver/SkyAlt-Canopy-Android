@@ -197,6 +197,7 @@ fun SimulatorScreen(
                     Modifier
                         .align(Alignment.TopCenter)
                         .onSizeChanged { barHeight = with(density) { it.height.toDp() } },
+                    onBack = { openScenarioPicker(leaving = true) },
                 )
             }
         }
