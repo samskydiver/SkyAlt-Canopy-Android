@@ -18,16 +18,23 @@ import kotlin.math.sqrt
 
 /**
  * The scene page's picture: the AFF exit, the student and two instructors
- * just out of the P750's door on jump run, its propeller turning. A drag
- * turns the view round them and a pinch zooms. Port of CanopyExitScene.swift.
+ * just out of the P750's door on jump run, its propeller turning. One
+ * finger turns the view round them, two fingers move it and a pinch zooms,
+ * as SceneKit's camera control on iOS. Port of CanopyExitScene.swift.
  */
 @SuppressLint("ViewConstructor")
 class ExitSceneView(context: Context) : GLSurfaceView(context) {
     @Volatile private var azimuth = -PI / 4
     @Volatile private var elevation = 0.0
     @Volatile private var distance = sqrt(162.0)
+    /** Where the camera looks, moved off the formation by two-finger drags. */
+    @Volatile private var panX = 0.0
+    @Volatile private var panY = 0.0
+    @Volatile private var panZ = 0.0
     private var lastX = 0f
     private var lastY = 0f
+    private var lastCentroidX = 0f
+    private var lastCentroidY = 0f
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -53,11 +60,27 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
                 lastX = event.x; lastY = event.y
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
+            MotionEvent.ACTION_POINTER_DOWN -> centroid(event, skip = -1).let { (x, y) -> lastCentroidX = x; lastCentroidY = y }
             MotionEvent.ACTION_POINTER_UP -> {
                 val keep = if (event.actionIndex == 0) 1 else 0
                 lastX = event.getX(keep); lastY = event.getY(keep)
+                centroid(event, skip = event.actionIndex).let { (x, y) -> lastCentroidX = x; lastCentroidY = y }
             }
-            MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
+            MotionEvent.ACTION_MOVE -> if (event.pointerCount >= 2) {
+                // Two fingers drag the picture along with them.
+                val (x, y) = centroid(event, skip = -1)
+                val density = resources.displayMetrics.density
+                val dx = (x - lastCentroidX) / density
+                val dy = (y - lastCentroidY) / density
+                lastCentroidX = x; lastCentroidY = y
+                val k = distance * 0.0025
+                val ca = cos(azimuth); val sa = sin(azimuth)
+                val ce = cos(elevation); val se = sin(elevation)
+                // The camera's right (cos a, 0, −sin a) and up (−sin e sin a, cos e, −sin e cos a).
+                panX += (-ca * dx + -se * sa * dy) * k
+                panY += (ce * dy) * k
+                panZ += (sa * dx + -se * ca * dy) * k
+            } else if (!scaleDetector.isInProgress) {
                 val density = resources.displayMetrics.density
                 val dx = (event.x - lastX) / density
                 val dy = (event.y - lastY) / density
@@ -67,6 +90,16 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
             }
         }
         return true
+    }
+
+    /** The middle of the fingers on the screen, leaving out the one at [skip] (lifting). */
+    private fun centroid(event: MotionEvent, skip: Int): Pair<Float, Float> {
+        var x = 0f; var y = 0f; var n = 0
+        for (i in 0 until event.pointerCount) {
+            if (i == skip) continue
+            x += event.getX(i); y += event.getY(i); n++
+        }
+        return if (n == 0) 0f to 0f else x / n to y / n
     }
 
     private inner class ExitRenderer : Renderer {
@@ -109,7 +142,8 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
             GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
             sky.draw()
 
-            val target = Models.EXIT_TARGET
+            val base = Models.EXIT_TARGET
+            val target = com.skyalt.canopy.model.V3(base.x + panX.toFloat(), base.y + panY.toFloat(), base.z + panZ.toFloat())
             val ce = cos(elevation)
             val ex = (target.x + distance * sin(azimuth) * ce).toFloat()
             val ey = (target.y + distance * sin(elevation)).toFloat()
