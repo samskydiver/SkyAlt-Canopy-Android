@@ -58,6 +58,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.CameraPositionState
 import com.google.maps.android.compose.MapType
+import com.skyalt.canopy.tools.planning.BoundingCircle
 import com.skyalt.canopy.tools.planning.Coordinate
 import com.skyalt.canopy.tools.planning.ManualWindLayer
 import com.skyalt.canopy.tools.planning.MapGeometry
@@ -102,8 +103,20 @@ val DEFAULT_MANUAL_LAYERS: List<ManualWindLayer>
 
 /** A camera move a session asks its map for. */
 sealed interface CameraRequest {
-    data class Center(val coordinate: Coordinate) : CameraRequest
-    data class Fit(val coordinates: List<Coordinate>) : CameraRequest
+    data class Center(val coordinate: Coordinate, val zoom: Float = DEFAULT_MAP_ZOOM) : CameraRequest
+    data class Fit(val coordinates: List<Coordinate>, val circles: List<BoundingCircle> = emptyList(), val paddingFactor: Double = 1.75) : CameraRequest
+}
+
+/** What the wind sheet shows and changes. */
+interface WindSheetSource {
+    val mode: WindSourceMode
+    val forecastDate: Instant
+    val profile: WindProfile?
+    /** The strings key of the last fetch error. */
+    val errorKey: String?
+    val isLoading: Boolean
+    fun selectMode(newMode: WindSourceMode)
+    fun selectForecastDate(date: Instant)
 }
 
 /** Default view: Bangkok, as on iOS, about 1.3 km across. */
@@ -117,9 +130,9 @@ fun ApplyCameraRequests(camera: CameraPositionState, request: CameraRequest?, on
         val r = request ?: return@LaunchedEffect
         try {
             when (r) {
-                is CameraRequest.Center -> camera.animate(CameraUpdateFactory.newLatLngZoom(r.coordinate.latLng(), DEFAULT_MAP_ZOOM), 350)
+                is CameraRequest.Center -> camera.animate(CameraUpdateFactory.newLatLngZoom(r.coordinate.latLng(), r.zoom), 350)
                 is CameraRequest.Fit -> {
-                    val region = MapGeometry.region(r.coordinates, minimumSpanDegrees = 0.003, paddingFactor = 1.75)
+                    val region = MapGeometry.region(r.coordinates, r.circles, minimumSpanDegrees = 0.003, paddingFactor = r.paddingFactor)
                     if (region != null) {
                         val c = region.center
                         val bounds = LatLngBounds(
@@ -150,17 +163,16 @@ class WindController(
     private val anchor: () -> Coordinate?,
     initialLayers: List<ManualWindLayer> = DEFAULT_MANUAL_LAYERS,
     private val onChange: () -> Unit,
-) {
-    var forecastDate by mutableStateOf(WindProfile.forecastHour(Instant.now()))
+) : WindSheetSource {
+    override var forecastDate by mutableStateOf(WindProfile.forecastHour(Instant.now()))
         private set
-    var mode by mutableStateOf(WindSourceMode.FORECAST)
+    override var mode by mutableStateOf(WindSourceMode.FORECAST)
         private set
-    var profile by mutableStateOf<WindProfile?>(null)
+    override var profile by mutableStateOf<WindProfile?>(null)
         private set
-    /** The strings key of the last fetch error. */
-    var errorKey by mutableStateOf<String?>(null)
+    override var errorKey by mutableStateOf<String?>(null)
         private set
-    var isLoading by mutableStateOf(false)
+    override var isLoading by mutableStateOf(false)
         private set
     var manualTerrainFeet by mutableDoubleStateOf(0.0)
         private set
@@ -170,13 +182,13 @@ class WindController(
     private var job: Job? = null
     private var revision = 0
 
-    fun selectMode(newMode: WindSourceMode) {
+    override fun selectMode(newMode: WindSourceMode) {
         if (newMode == mode) return
         mode = newMode
         refresh()
     }
 
-    fun selectForecastDate(date: Instant) {
+    override fun selectForecastDate(date: Instant) {
         val normalized = WindProfile.forecastHour(date)
         if (normalized == forecastDate) return
         forecastDate = normalized

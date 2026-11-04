@@ -39,6 +39,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -85,7 +86,7 @@ fun formatMonthDayTime(instant: Instant, s: Strings): String {
 }
 
 /** The error a wind fetch left, as shown on the map card and the sheet. */
-fun windErrorText(wind: WindController, s: Strings): String? =
+fun windErrorText(wind: WindSheetSource, s: Strings): String? =
     wind.errorKey?.let { s.format("%@ Switch to Manual to enter observed winds.", s(it)) }
 
 /** What the wind sheet says about the tool it belongs to. */
@@ -104,7 +105,7 @@ data class WindSheetText(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WindDataSheet(
-    wind: WindController,
+    wind: WindSheetSource,
     coordinate: Coordinate?,
     maximumAltitudeFeet: Double,
     text: WindSheetText,
@@ -346,17 +347,17 @@ fun ValueSlider(title: String, valueText: String, value: Double, range: ClosedFl
 
 /** A fixed stack of 1,000 ft layers typed in as speed and direction, for the Cutaway Finder. */
 @Composable
-fun CutawayManualWindSection(wind: WindController) {
+fun CutawayManualWindSection(layers: List<ManualWindLayer>, onUpdate: (List<ManualWindLayer>) -> Unit) {
     val s = LocalStrings.current
     FootnoteText(s("Enter speed and direction-from for each 1,000-foot AGL layer."))
-    for (layer in wind.manualLayers) {
+    for (layer in layers) {
         val title = if (layer.altitudeAGLFeet.roundToInt() == 0) s("Surface") else s.format("%@ ft AGL", grouped(layer.altitudeAGLFeet))
-        fun update(changed: ManualWindLayer) = wind.updateManualLayers(wind.manualLayers.map { if (it.id == layer.id) changed else it })
-        FormSection(title) {
+        fun update(changed: ManualWindLayer) = onUpdate(layers.map { if (it.id == layer.id) changed else it })
+        key(layer.id) { FormSection(title) {
             LayerNumberField(s("Speed"), layer.speedKnots, "kt", 1) { update(layer.copy(speedKnots = it.coerceIn(0.0, 200.0))) }
             FormDivider()
             LayerNumberField(s("Direction from"), layer.directionFromDegrees, "°", 0) { update(layer.copy(directionFromDegrees = it.coerceIn(0.0, 360.0))) }
-        }
+        } }
     }
 }
 

@@ -148,7 +148,7 @@ class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
 
     private var calculationJob: Job? = null
 
-    val wind = WindController(scope, client, anchor = { landingPoint }) {
+    val wind: WindController = WindController(scope, client, anchor = { landingPoint }) {
         val profile = wind.profile
         if (profile != null) {
             updateSuggestedJumpRun()
