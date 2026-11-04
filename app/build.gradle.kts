@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -11,8 +13,15 @@ android {
         applicationId = "com.skyalt.canopy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 7
+        versionName = "0.4.0"
+        // Google Maps key: local.properties MAPS_API_KEY=... on the Mac, or
+        // the MAPS_API_KEY environment variable in CI. Never committed.
+        val localProps = Properties().apply {
+            rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+        }
+        manifestPlaceholders["MAPS_API_KEY"] =
+            localProps.getProperty("MAPS_API_KEY") ?: System.getenv("MAPS_API_KEY") ?: ""
     }
 
     // The upload key comes from the environment in CI (GitHub secrets);
@@ -64,6 +73,13 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
+    // Repack reminders.
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
+    // The planning tools' maps.
+    implementation("com.google.maps.android:maps-compose:6.4.1")
+    implementation("com.google.android.gms:play-services-maps:19.0.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
     // Motion capture: the front camera and ML Kit's body pose.
     val camerax = "1.4.1"
     implementation("androidx.camera:camera-core:$camerax")

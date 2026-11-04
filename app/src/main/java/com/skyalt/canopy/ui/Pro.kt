@@ -1,5 +1,8 @@
 package com.skyalt.canopy.ui
 
+import com.skyalt.canopy.R
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -54,7 +57,7 @@ private const val PLAY_TERMS_URL = "https://play.google.com/about/play-terms/"
  * nothing to go back to.
  */
 @Composable
-fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)?) {
+fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)?, focus: com.skyalt.canopy.app.ProFeature? = null) {
     val s = LocalStrings.current
     val p = LocalPalette.current
     val context = LocalContext.current
@@ -67,27 +70,34 @@ fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 560.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Icon(
-                    if (pro.isPro) Icons.Filled.CheckCircle else SimIcons.Crown, null,
-                    tint = if (pro.isPro) p.good else hex(0xf08a24),
-                    modifier = Modifier.size(48.dp),
-                )
+                if (pro.isPro) {
+                    Icon(Icons.Filled.CheckCircle, null, tint = p.good, modifier = Modifier.size(48.dp))
+                } else {
+                    Image(painterResource(R.drawable.ic_pro_pin), null, modifier = Modifier.size(56.dp))
+                }
                 Text(
-                    if (pro.isPro) s("AltiX Pro Active") else s("AltiX Pro"),
+                    if (pro.isPro) s("AltiX Pro Active") else s("Unlock Everything"),
                     fontSize = 26.sp, fontWeight = FontWeight.Bold, color = p.foreground,
                 )
                 if (!pro.isPro && trialUsedUp) {
                     Text(s("Free sessions used up. Subscribe to AltiX Pro to keep flying."), fontSize = 15.sp, color = p.foreground, textAlign = TextAlign.Center)
                 }
+                if (!pro.isPro) {
+                    Text(
+                        s("Choose annual or monthly access to unlock every AltiX tool on this Google account."),
+                        fontSize = 14.sp, color = p.muted, textAlign = TextAlign.Center,
+                    )
+                }
                 Card {
-                    Text("AltiX Skydiving", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
-                    Text(s("Fly the 3D canopy simulator as often as you like."), fontSize = 13.sp, color = p.muted)
-                    Spacer(Modifier.width(4.dp))
-                    for (benefit in listOf("Unlimited simulator sessions", "Motion capture and casting to a TV", "All future simulator updates")) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.CheckCircle, null, tint = p.good, modifier = Modifier.size(16.dp))
+                    for (feature in com.skyalt.canopy.app.ProFeature.entries) {
+                        val focused = feature == focus
+                        Row(verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Filled.CheckCircle, null, tint = if (focused) hex(0xf08a24) else p.good, modifier = Modifier.padding(top = 2.dp).size(16.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text(s(benefit), fontSize = 14.sp, color = p.foreground)
+                            Column {
+                                Text(s(feature.title), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
+                                Text(s(feature.description), fontSize = 12.sp, color = p.muted)
+                            }
                         }
                     }
                 }
@@ -170,6 +180,6 @@ fun ProBlock(pro: ProAccess, trial: SimulatorTrial, trialEnforced: Boolean, onOp
             !trialEnforced -> Note(s("Development build: the free-session limit is off."))
             else -> Note(s.format("%1\$d of %2\$d free sessions left", trial.sessionsLeft, SimulatorTrial.FREE_SESSIONS))
         }
-        ChipButton(if (pro.isPro) s("Manage") else s("Unlock AltiX Pro"), icon = SimIcons.Crown, onClick = onOpen)
+        ChipButton(if (pro.isPro) s("Manage") else s("Unlock AltiX Pro"), iconPainter = painterResource(R.drawable.ic_pro_pin), onClick = onOpen)
     }
 }

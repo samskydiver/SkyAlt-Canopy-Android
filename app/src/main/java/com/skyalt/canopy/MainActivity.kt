@@ -1,260 +1,145 @@
 package com.skyalt.canopy
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.provider.MediaStore
-import android.provider.Settings
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Handyman
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.core.content.ContextCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.lifecycle.lifecycleScope
-import com.skyalt.canopy.sim.CanopyGLView
-import com.skyalt.canopy.sim.CastController
-import com.skyalt.canopy.sim.MotionCaptureController
-import com.skyalt.canopy.sim.PreferencesStore
-import com.skyalt.canopy.sim.ProAccess
-import com.skyalt.canopy.sim.SimulatorEngine
-import com.skyalt.canopy.sim.SimulatorTrial
-import com.skyalt.canopy.sim.UiState
-import com.skyalt.canopy.ui.ExternalStage
-import com.skyalt.canopy.ui.LanguageSetting
-import com.skyalt.canopy.ui.LocalPalette
+import com.skyalt.canopy.app.AppServices
+import com.skyalt.canopy.app.ProFeature
+import com.skyalt.canopy.app.SettingsScreen
+import com.skyalt.canopy.app.Tool
+import com.skyalt.canopy.app.ToolsScreen
+import com.skyalt.canopy.tools.RepackScreen
+import com.skyalt.canopy.tools.RepackStore
+import com.skyalt.canopy.tools.WingLoadScreen
+import com.skyalt.canopy.tools.altixColors
+import com.skyalt.canopy.tools.cutaway.CutawayFinderScreen
+import com.skyalt.canopy.tools.exitspot.ExitSpotScreen
+import com.skyalt.canopy.tools.landing.LandingPatternScreen
 import com.skyalt.canopy.ui.Palette
 import com.skyalt.canopy.ui.ProUpgradeScreen
 import com.skyalt.canopy.ui.ProvideSimulatorLocals
-import com.skyalt.canopy.ui.SimDrawer
-import com.skyalt.canopy.ui.SimulatorHost
-import com.skyalt.canopy.ui.SimulatorScreen
 import com.skyalt.canopy.ui.Strings
 import kotlinx.coroutines.launch
-import java.util.concurrent.Executors
 
 /**
- * The app is the simulator: one landscape activity, full screen, the
- * screen kept on (a flight leaves it untouched for minutes). Without AltiX
- * Pro each launch uses one of the free sessions.
+ * AltiX Skydiving: the Tools and Settings tabs, as the iPhone app without
+ * the Apple Watch parts. The canopy simulator opens in its own landscape
+ * activity.
  */
 class MainActivity : ComponentActivity() {
-    private enum class Gate { LOADING, OPEN, LOCKED }
+    private enum class Tab { TOOLS, SETTINGS }
 
-    private val main = Handler(Looper.getMainLooper())
-    private var uiState by mutableStateOf(UiState())
-    private var drawer by mutableStateOf<SimDrawer?>(SimDrawer.SETTINGS)
-    private var editingDropzone by mutableStateOf(false)
-    private var gate by mutableStateOf(Gate.LOADING)
-    private lateinit var engine: SimulatorEngine
-    private lateinit var glView: CanopyGLView
-    private lateinit var capture: MotionCaptureController
-    private lateinit var cast: CastController
-    private lateinit var pro: ProAccess
-    private lateinit var trial: SimulatorTrial
-    private lateinit var language: LanguageSetting
-    private var presentation: CastPresentation? = null
-    private val background = Executors.newSingleThreadExecutor()
-
-    private val pickPicture = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@registerForActivityResult
-        background.execute {
-            val bitmap = try {
-                if (Build.VERSION.SDK_INT >= 28) {
-                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { decoder, _, _ ->
-                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaStore.Images.Media.getBitmap(contentResolver, uri)
-                }
-            } catch (e: Exception) {
-                null
-            }
-            if (bitmap != null) {
-                engine.setDropzoneImage(bitmap.copy(Bitmap.Config.ARGB_8888, false))
-                main.post { editingDropzone = true }
-            }
-        }
-    }
-
-    private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) capture.start(this) else capture.markRefused()
-    }
-
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
-
-        engine = SimulatorEngine(PreferencesStore(this)) { state -> main.post { uiState = state } }
-        glView = CanopyGLView(this, engine)
-        capture = MotionCaptureController(this)
-        engine.motionInput = capture
-        cast = CastController(this)
-        cast.activate()
-        pro = ProAccess(this)
-        pro.start()
-        trial = SimulatorTrial(this)
-        language = LanguageSetting(this)
-        // A visit begins at the setup, with the run waiting for Play.
-        engine.pause()
-        openGate(isFreshLaunch = savedInstanceState == null)
-
-        val host = SimulatorHost(
-            engine = engine,
-            glView = glView,
-            capture = capture,
-            pro = pro,
-            trial = trial,
-            trialEnforced = BuildConfig.TRIAL_ENFORCED,
-            language = language,
-            onChoosePicture = { pickPicture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            onToggleCamera = ::toggleCamera,
-            onOpenAppSettings = {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
-            },
-            onOpenCastSettings = {
-                try {
-                    startActivity(Intent(Settings.ACTION_CAST_SETTINGS))
-                } catch (e: Exception) {
-                    startActivity(Intent(Settings.ACTION_SETTINGS))
-                }
-            },
-        )
+        val pro = AppServices.pro(this)
+        val trial = AppServices.trial(this)
+        val language = AppServices.language(this)
+        val settings = AppServices.settings(this)
+        val repack = RepackStore(applicationContext)
+        // Tool sessions live here so each tool keeps its state across tab switches.
+        val sessions = AppServices.sessions(this)
 
         setContent {
             val chinese = language.value.isChinese(LocalConfiguration.current.locales[0])
             val strings = Strings(chinese)
-            val palette = if (isSystemInDarkTheme()) Palette.dark else Palette.light
-            LaunchedEffect(chinese) { engine.setLegLabels(strings("downwind"), strings("base"), strings("final")) }
-            // Subscribing while locked opens the simulator straight away.
-            LaunchedEffect(pro.isPro) { if (pro.isPro && gate == Gate.LOCKED) gate = Gate.OPEN }
-            ProvideSimulatorLocals(palette, strings) {
-                when (gate) {
-                    Gate.LOADING -> Box(Modifier.fillMaxSize().background(LocalPalette.current.background))
-                    Gate.LOCKED -> ProUpgradeScreen(pro, trialUsedUp = true, onClose = null)
-                    Gate.OPEN -> {
-                        val display = cast.display
-                        val castingToDisplay = cast.isCasting && display != null
-                        BackHandler(enabled = drawer != null || cast.isCasting) {
-                            if (drawer != null) drawer = null else cast.isCasting = false
+            val dark = isSystemInDarkTheme()
+            var tab by rememberSaveable { mutableStateOf(Tab.TOOLS) }
+            var tool by rememberSaveable { mutableStateOf<Tool?>(null) }
+            var proSheet by remember { mutableStateOf(false) }
+            var proFocus by remember { mutableStateOf<ProFeature?>(null) }
+            val scope = rememberCoroutineScope()
+            LaunchedEffect(Unit) { trial.load() }
+
+            fun showPro(feature: ProFeature?) {
+                proFocus = feature
+                proSheet = true
+            }
+
+            fun openSimulator() {
+                scope.launch {
+                    if (!trial.isLoaded) trial.load()
+                    when {
+                        pro.isPro || !BuildConfig.TRIAL_ENFORCED -> startActivity(Intent(this@MainActivity, SimulatorActivity::class.java))
+                        trial.hasSessionsLeft -> {
+                            trial.recordSession()
+                            startActivity(Intent(this@MainActivity, SimulatorActivity::class.java))
                         }
-                        DisposableEffect(castingToDisplay, display?.displayId) {
-                            if (castingToDisplay) {
-                                val shown = CastPresentation(this@MainActivity, display!!, engine) {
-                                    ProvideSimulatorLocals(Palette.light, strings) { ExternalStage(uiState, engine, capture) }
-                                }
-                                shown.setOnDismissListener { if (presentation === shown) presentation = null }
-                                try {
-                                    shown.show()
-                                    presentation = shown
-                                } catch (e: WindowManager.InvalidDisplayException) {
-                                    cast.isCasting = false
-                                }
-                            }
-                            onDispose {
-                                presentation?.dismiss()
-                                presentation = null
-                            }
-                        }
-                        SimulatorScreen(
-                            state = uiState,
-                            host = host,
-                            drawer = drawer,
-                            onDrawer = { drawer = it },
-                            editingDropzone = editingDropzone,
-                            onEditDropzone = { editingDropzone = it },
-                            isCasting = cast.isCasting,
-                            isDisplayConnected = display != null,
-                            onCasting = { on ->
-                                if (on) editingDropzone = false
-                                cast.isCasting = on
-                            },
-                        )
+                        else -> showPro(ProFeature.CANOPY_SIMULATOR)
                     }
                 }
             }
-        }
-    }
 
-    /**
-     * The free sessions: each fresh launch without AltiX Pro uses one. A
-     * restored activity (the process came back) was already counted.
-     */
-    private fun openGate(isFreshLaunch: Boolean) {
-        if (!BuildConfig.TRIAL_ENFORCED || pro.isPro || !isFreshLaunch) {
-            gate = Gate.OPEN
-            return
-        }
-        lifecycleScope.launch {
-            trial.load()
-            if (pro.isPro) {
-                gate = Gate.OPEN
-            } else if (trial.hasSessionsLeft) {
-                trial.recordSession()
-                gate = Gate.OPEN
-            } else {
-                gate = Gate.LOCKED
-            }
-        }
-    }
-
-    private fun toggleCamera() {
-        when {
-            capture.active -> capture.stop(silently = false)
-            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED -> capture.start(this)
-            else -> {
-                capture.markAsking()
-                askCamera.launch(Manifest.permission.CAMERA)
+            ProvideSimulatorLocals(if (dark) Palette.dark else Palette.light, strings) {
+                MaterialTheme(colorScheme = altixColors(dark)) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        BackHandler(enabled = proSheet || tool != null || tab != Tab.TOOLS) {
+                            when {
+                                proSheet -> proSheet = false
+                                tool != null -> tool = null
+                                else -> tab = Tab.TOOLS
+                            }
+                        }
+                        val back = { tool = null }
+                        when {
+                            proSheet -> ProUpgradeScreen(pro, trialUsedUp = proFocus == ProFeature.CANOPY_SIMULATOR, onClose = { proSheet = false }, focus = proFocus)
+                            tool == Tool.WINGLOAD -> WingLoadScreen(back)
+                            tool == Tool.REPACK -> RepackScreen(repack, back)
+                            tool == Tool.LANDING_PATTERN -> LandingPatternScreen(sessions.landing, settings, pro.isPro || !BuildConfig.TRIAL_ENFORCED, back, onLocked = ::showPro)
+                            tool == Tool.EXIT_SPOT -> ExitSpotScreen(sessions.exitSpot, settings, back)
+                            tool == Tool.CUTAWAY_FINDER -> CutawayFinderScreen(sessions.cutaway, settings, back)
+                            else -> Scaffold(
+                                topBar = { TopAppBar(title = { Text(if (tab == Tab.TOOLS) strings("Tools") else strings("Settings")) }) },
+                                bottomBar = {
+                                    NavigationBar {
+                                        NavigationBarItem(tab == Tab.TOOLS, { tab = Tab.TOOLS }, { Icon(Icons.Filled.Handyman, null) }, label = { Text(strings("Tools")) })
+                                        NavigationBarItem(tab == Tab.SETTINGS, { tab = Tab.SETTINGS }, { Icon(Icons.Filled.Settings, null) }, label = { Text(strings("Settings")) })
+                                    }
+                                },
+                                containerColor = MaterialTheme.colorScheme.background,
+                            ) { padding ->
+                                if (tab == Tab.TOOLS) {
+                                    ToolsScreen(padding, pro, trial, BuildConfig.TRIAL_ENFORCED, onOpen = { tool = it }, onSimulator = ::openSimulator, onLocked = ::showPro)
+                                } else {
+                                    SettingsScreen(padding, pro, language, settings, onUnlock = { showPro(null) })
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        glView.onResume()
-        presentation?.glView?.onResume()
-        pro.refresh()
-    }
-
-    override fun onPause() {
-        glView.onPause()
-        presentation?.glView?.onPause()
-        engine.pause()
-        super.onPause()
-    }
-
-    override fun onDestroy() {
-        cast.deactivate()
-        capture.stop(silently = true)
-        presentation?.dismiss()
-        super.onDestroy()
+        AppServices.pro(this).refresh()
     }
 }

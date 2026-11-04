@@ -1,34 +1,16 @@
 #!/usr/bin/env bash
-# Installs the debug APK on the running emulator, flies a run and takes
-# screenshots along the way. Used by the screenshots workflow.
+# Installs the debug APK on the running emulator, walks through the tools,
+# flies a run and takes screenshots along the way. Used by the screenshots workflow.
 set -x
 mkdir -p screenshots
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell settings put system accelerometer_rotation 0
-adb shell settings put system user_rotation 1
 shot() { sleep "${2:-1}"; adb exec-out screencap -p > "screenshots/$1.png"; }
 # Skip the one-time "Viewing full screen" hint, which would cover the app.
 adb shell settings put secure immersive_mode_confirmations confirmed
 # A 16:9 screen, the shape Google Play takes for phone screenshots.
 adb shell wm size 1080x1920
-adb logcat -c
-adb shell am start -n com.skyalt.canopy/.MainActivity
-shot 01-settings 8
-# Screen size, to tap relative positions.
-read W H < <(adb shell wm size | tail -1 | sed -E 's/.* ([0-9]+)x([0-9]+).*/\2 \1/')
-echo "landscape ${W}x${H}"
-# Close the settings drawer by tapping the dimmed left side.
-adb shell input tap $((W / 5)) $((H / 2))
-shot 02-paused 2
-# Start the run with the centre button.
-adb shell input tap $((W / 2)) $((H / 2))
-shot 03-flying 4
-# Hold the right toggle half-way for a turn.
-adb shell input swipe $((W - 60)) $((H / 2)) $((W - 60)) $((H * 55 / 100)) 3000
-shot 04-turn 1
-adb shell input keyevent KEYCODE_WAKEUP
-shot 05-later 20
-shot 06-later 30
+adb shell pm grant com.skyalt.canopy android.permission.ACCESS_FINE_LOCATION || true
+adb shell pm grant com.skyalt.canopy android.permission.POST_NOTIFICATIONS || true
 # Taps the element whose text or description matches, from a UI dump.
 tap_ui() {
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
@@ -49,6 +31,62 @@ sys.exit(1)
 PY
   adb shell input tap $(cat /tmp/xy)
 }
+back() { adb shell input keyevent KEYCODE_BACK; sleep 1; }
+# The tools, in portrait.
+adb shell settings put system accelerometer_rotation 0
+adb shell settings put system user_rotation 0
+adb logcat -c
+adb shell am start -n com.skyalt.canopy/.MainActivity
+shot 00-tools 8
+tap_ui "Wingload Calculator" && shot 00a-wingload 2 && back
+tap_ui "Repack Reminder" && shot 00b-repack 2 && back
+tap_ui "Landing Pattern Assistant" && {
+  shot 00c-landing 4
+  adb shell input tap 540 1000
+  shot 00d-landing-pattern 10
+  back
+}
+tap_ui "Exit Spot" && {
+  shot 00e-exit 4
+  adb shell input tap 540 1000
+  shot 00f-exit-ranges 10
+  back
+}
+adb shell input swipe 540 1400 540 500 400
+sleep 1
+tap_ui "Cutaway Finder" && {
+  shot 00g-cutaway 4
+  tap_ui "Draw Cutaway Area" || echo "no draw button"
+  # One closed stroke round the cutaway area.
+  adb shell input motionevent DOWN 690 1000
+  for a in $(seq 15 15 360); do
+    read x y < <(python3 -c "import math; print(int(540 + 150 * math.cos(math.radians($a))), int(1000 + 150 * math.sin(math.radians($a))))")
+    adb shell input motionevent MOVE "$x" "$y"
+  done
+  adb shell input motionevent UP 690 1000
+  shot 00h-cutaway-drawn 10
+  back
+}
+tap_ui "Settings" && shot 00i-settings 2 && tap_ui "Tools"
+# The simulator, in landscape.
+adb shell settings put system user_rotation 1
+tap_ui "Canopy Simulator" || echo "no simulator row"
+shot 01-settings 8
+# Screen size, to tap relative positions.
+read W H < <(adb shell wm size | tail -1 | sed -E 's/.* ([0-9]+)x([0-9]+).*/\2 \1/')
+echo "landscape ${W}x${H}"
+# Close the settings drawer by tapping the dimmed left side.
+adb shell input tap $((W / 5)) $((H / 2))
+shot 02-paused 2
+# Start the run with the centre button.
+adb shell input tap $((W / 2)) $((H / 2))
+shot 03-flying 4
+# Hold the right toggle half-way for a turn.
+adb shell input swipe $((W - 60)) $((H / 2)) $((W - 60)) $((H * 55 / 100)) 3000
+shot 04-turn 1
+adb shell input keyevent KEYCODE_WAKEUP
+shot 05-later 20
+shot 06-later 30
 # Fly on to the ground, then replay the run with its profile.
 shot 06b-landed 100
 tap_ui "REPLAY" || echo "no replay button"
