@@ -54,7 +54,7 @@ private const val PLAY_TERMS_URL = "https://play.google.com/about/play-terms/"
  * nothing to go back to.
  */
 @Composable
-fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)?) {
+fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)?, focus: com.skyalt.canopy.app.ProFeature? = null) {
     val s = LocalStrings.current
     val p = LocalPalette.current
     val context = LocalContext.current
@@ -73,21 +73,28 @@ fun ProUpgradeScreen(pro: ProAccess, trialUsedUp: Boolean, onClose: (() -> Unit)
                     modifier = Modifier.size(48.dp),
                 )
                 Text(
-                    if (pro.isPro) s("AltiX Pro Active") else s("AltiX Pro"),
+                    if (pro.isPro) s("AltiX Pro Active") else s("Unlock Everything"),
                     fontSize = 26.sp, fontWeight = FontWeight.Bold, color = p.foreground,
                 )
                 if (!pro.isPro && trialUsedUp) {
                     Text(s("Free sessions used up. Subscribe to AltiX Pro to keep flying."), fontSize = 15.sp, color = p.foreground, textAlign = TextAlign.Center)
                 }
+                if (!pro.isPro) {
+                    Text(
+                        s("Choose annual or monthly access to unlock every AltiX tool on this Google account."),
+                        fontSize = 14.sp, color = p.muted, textAlign = TextAlign.Center,
+                    )
+                }
                 Card {
-                    Text("AltiX Skydiving", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
-                    Text(s("Fly the 3D canopy simulator as often as you like."), fontSize = 13.sp, color = p.muted)
-                    Spacer(Modifier.width(4.dp))
-                    for (benefit in listOf("Unlimited simulator sessions", "Motion capture and casting to a TV", "All future simulator updates")) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.CheckCircle, null, tint = p.good, modifier = Modifier.size(16.dp))
+                    for (feature in com.skyalt.canopy.app.ProFeature.entries) {
+                        val focused = feature == focus
+                        Row(verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Filled.CheckCircle, null, tint = if (focused) hex(0xf08a24) else p.good, modifier = Modifier.padding(top = 2.dp).size(16.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text(s(benefit), fontSize = 14.sp, color = p.foreground)
+                            Column {
+                                Text(s(feature.title), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
+                                Text(s(feature.description), fontSize = 12.sp, color = p.muted)
+                            }
                         }
                     }
                 }

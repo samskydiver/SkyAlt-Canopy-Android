@@ -39,12 +39,14 @@ class LanguageSetting(context: Context) {
  * Chinese from the iOS app's Localizable.xcstrings. Formats use %s/%d/%1$s.
  */
 class Strings(val chinese: Boolean) {
-    operator fun invoke(key: String): String = if (chinese) ZH[key] ?: key else key
+    operator fun invoke(key: String): String = if (chinese) ZH[key] ?: AppStringsZh.map[key] ?: key else key
 
     fun format(key: String, vararg args: Any): String {
         val pattern = invoke(key)
             .replace(Regex("%(\\d)\\\$@")) { "%" + it.groupValues[1] + "\$s" }
             .replace("%@", "%s")
+            .replace(Regex("%(\\d\\\$)?lld")) { "%" + it.groupValues[1] + "d" }
+            .replace(Regex("%(\\d\\\$)?ld")) { "%" + it.groupValues[1] + "d" }
         return String.format(Locale.US, pattern, *args)
     }
 
