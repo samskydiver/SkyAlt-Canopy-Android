@@ -57,6 +57,10 @@ class Strings(val chinese: Boolean) {
 
     companion object {
         val ZH: Map<String, String> = mapOf(
+        // Android-only text.
+        "Choose annual or monthly access to unlock every AltiX tool on this Google account." to "选择按年或按月订阅，即可在此 Google 账号上解锁全部 AltiX 工具。",
+        "Delete" to "删除",
+        "The weather service could not be reached." to "无法连接天气服务。",
         "%@ %@ flown · %@ %@ up · brakes %d%%" to "已飞 %@ %@ · 高度 %@ %@ · 刹车 %d%%",
         "%@ %@ of the target" to "目标%2$@方 %1$@",
         "%@ before the pattern entry" to "进入点前 %@",
