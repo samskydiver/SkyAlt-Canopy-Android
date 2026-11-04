@@ -111,6 +111,7 @@ fun ChipButton(
     fontSize: Int = 13,
     fillsWidth: Boolean = false,
     iconOnly: Boolean = false,
+    stacked: Boolean = false,
     onClick: () -> Unit,
 ) {
     val p = LocalPalette.current
@@ -132,6 +133,17 @@ fun ChipButton(
     if (style == ChipStyle.PANEL && !isOn) m = m.border(1.dp, p.line, shape)
     m = m.clickable(enabled = !isDisabled, onClick = onClick)
     if (fillsWidth) m = m.fillMaxWidth()
+    if (stacked && icon != null) {
+        // Narrow viewports: the icon with its name underneath, so each button stays labelled.
+        Column(
+            m.padding(horizontal = 8.dp, vertical = 5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size((fontSize + 4).dp))
+            Text(title.uppercase(), style = displayStyle((fontSize - 3).sp), color = foreground, maxLines = 1, letterSpacing = 0.4.sp)
+        }
+        return
+    }
     Row(
         m.padding(horizontal = if (iconOnly) 9.dp else 11.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.Center,

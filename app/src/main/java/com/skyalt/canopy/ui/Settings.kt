@@ -46,19 +46,30 @@ import com.skyalt.canopy.sim.UiState
 import java.util.Locale
 import kotlin.math.hypot
 
-/** The settings drawer: flight setup, units, camera, path styles and the dropzone picture. */
+/** The settings drawer: flight setup, language, units, camera, path styles and the dropzone picture. */
 @Composable
 fun SettingsContent(
     state: UiState,
     engine: SimulatorEngine,
+    language: LanguageSetting,
     onOpenStartPoint: () -> Unit,
     onChoosePicture: () -> Unit,
     onEditPicture: () -> Unit,
     onApply: () -> Unit,
+    pictureLocked: Boolean = false,
 ) {
     val s = LocalStrings.current
     val p = LocalPalette.current
     SetupPanel(state, engine, onOpenStartPoint, onApply)
+    Block(s("Language")) {
+        // Each language is named in itself, so the way back is readable whichever is on.
+        SegmentedButtons(
+            AppLanguage.entries,
+            { when (it) { AppLanguage.SYSTEM -> s("System"); AppLanguage.CHINESE -> "简体中文"; AppLanguage.ENGLISH -> "English" } },
+            language.value,
+            { language.select(it) },
+        )
+    }
     Block(s("Units")) {
         SegmentedButtons(Units.entries, { if (it == Units.METRIC) "m/s · m" else "mph · ft" }, state.units, { engine.setUnits(it) })
     }
@@ -89,7 +100,9 @@ fun SettingsContent(
                     Text(s("No image").uppercase(), style = displayStyle(10.sp), color = p.muted, modifier = Modifier.padding(4.dp))
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (pictureLocked) {
+                Note(s("The dropzone picture is set up on the phone's own screen. Stop casting to change it."))
+            } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ChipButton(s("Choose picture"), onClick = onChoosePicture)
                 if (state.dropzoneImage != null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

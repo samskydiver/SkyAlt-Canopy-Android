@@ -82,10 +82,9 @@ fun ProfileColumn(state: UiState, engine: SimulatorEngine, modifier: Modifier = 
         }
         LegendLine(s("This run (darker = more brake)"), p.accent, false)
         LegendLine(s("Pattern altitudes"), p.muted, true)
-        Row {
-            Text(s("Run history"), fontSize = 12.sp, color = p.muted, modifier = Modifier.weight(1f))
-            ChipButton(s("Clear history"), isDisabled = state.runs.isEmpty(), fontSize = 11) { engine.clearHistory() }
-        }
+        // Stacked, so a narrow column never squeezes the heading into a sliver.
+        Text(s("Run history"), fontSize = 12.sp, color = p.muted)
+        ChipButton(s("Clear history"), isDisabled = state.runs.isEmpty(), fontSize = 11) { engine.clearHistory() }
         Column(Modifier.heightIn(max = 96.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             for (run in state.runs) RunRow(s.format("Run %d", run.number), run.touchdown, false, state.units)
             RunRow(s("This run"), state.touchdown, true, state.units)

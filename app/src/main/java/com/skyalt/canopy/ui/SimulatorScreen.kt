@@ -41,98 +41,156 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.skyalt.canopy.sim.CanopyGLView
 import com.skyalt.canopy.sim.FlightStatus
+import com.skyalt.canopy.sim.MotionCaptureController
+import com.skyalt.canopy.sim.ProAccess
 import com.skyalt.canopy.sim.SimulatorEngine
+import com.skyalt.canopy.sim.SimulatorTrial
 import com.skyalt.canopy.sim.UiState
+
+/** The panels that slide in from the right edge of the simulator. */
+enum class SimDrawer(val titleKey: String) { SETTINGS("Settings"), MOTION_CAPTURE("Motion capture") }
+
+/** What the activity hands the simulator's interface. */
+class SimulatorHost(
+    val engine: SimulatorEngine,
+    val glView: CanopyGLView,
+    val capture: MotionCaptureController,
+    val pro: ProAccess,
+    val trial: SimulatorTrial,
+    val trialEnforced: Boolean,
+    val language: LanguageSetting,
+    val onChoosePicture: () -> Unit,
+    val onToggleCamera: () -> Unit,
+    val onOpenAppSettings: () -> Unit,
+    val onOpenCastSettings: () -> Unit,
+)
 
 /**
  * The simulator fills the screen in landscape: the 3D view with the
- * instruments across the top, a brake toggle on each side and the buttons
- * along the bottom. Settings slide in from the right; a replay opens the
- * flight profile beside the 3D view.
+ * instruments across the top, a brake toggle on each side (or the camera
+ * picture while motion capture runs) and the buttons along the bottom.
+ * Panels slide in from the right; a replay opens the flight profile beside
+ * the 3D view. While casting, the phone shows the controls only.
  */
 @Composable
 fun SimulatorScreen(
     state: UiState,
-    engine: SimulatorEngine,
-    glView: CanopyGLView,
-    settingsOpen: Boolean,
-    onSettingsOpen: (Boolean) -> Unit,
-    onChoosePicture: () -> Unit,
+    host: SimulatorHost,
+    drawer: SimDrawer?,
+    onDrawer: (SimDrawer?) -> Unit,
     editingDropzone: Boolean,
     onEditDropzone: (Boolean) -> Unit,
+    isCasting: Boolean,
+    isDisplayConnected: Boolean,
+    onCasting: (Boolean) -> Unit,
 ) {
+    val engine = host.engine
+    val capture = host.capture
     var choosingStart by remember { mutableStateOf(false) }
+    var showingPro by remember { mutableStateOf(false) }
     var barHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val focus = LocalFocusManager.current
 
-    fun openSettings() {
-        if (!settingsOpen) engine.pause()
-        onSettingsOpen(!settingsOpen)
+    fun open(which: SimDrawer) {
+        if (drawer == which) {
+            onDrawer(null)
+        } else {
+            engine.pause()
+            onDrawer(which)
+        }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val showsProfile = state.replay != null
-            val profileWidth = if (showsProfile) maxWidth / 4 else 0.dp
-            val viewWidth = maxWidth - profileWidth
-            Row(Modifier.fillMaxSize()) {
-                Box(Modifier.width(viewWidth).fillMaxHeight()) {
-                    AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize())
-                    Hud(state, engine, barHeight, settingsOpen, ::openSettings)
-                }
-                if (showsProfile) {
-                    ProfileColumn(
-                        state, engine,
-                        Modifier.width(profileWidth).fillMaxHeight().padding(top = barHeight)
-                            .windowInsetsPadding(WindowInsets.displayCutout),
-                    )
-                }
-            }
-            InstrumentBar(
-                state,
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .onSizeChanged { barHeight = with(density) { it.height.toDp() } },
+        if (isCasting) {
+            CastControls(
+                state, engine, capture, isDisplayConnected,
+                onOpenSettings = { open(SimDrawer.SETTINGS) },
+                onOpenMotionCapture = { open(SimDrawer.MOTION_CAPTURE) },
+                onStopCasting = { onCasting(false) },
+                onOpenCastSettings = host.onOpenCastSettings,
             )
+        } else {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val showsProfile = state.replay != null
+                val profileWidth = if (showsProfile) minOf(maxOf(maxWidth / 4, 230.dp), maxWidth / 2) else 0.dp
+                val viewWidth = maxWidth - profileWidth
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.width(viewWidth).fillMaxHeight()) {
+                        AndroidView(factory = { host.glView }, modifier = Modifier.fillMaxSize())
+                        Hud(
+                            state, engine, capture, barHeight, drawer != null, compactTools = viewWidth < 820.dp,
+                            onOpenSettings = { open(SimDrawer.SETTINGS) },
+                            onOpenMotionCapture = { open(SimDrawer.MOTION_CAPTURE) },
+                            onCast = { onCasting(true) },
+                        )
+                    }
+                    if (showsProfile) {
+                        ProfileColumn(
+                            state, engine,
+                            Modifier.width(profileWidth).fillMaxHeight().padding(top = barHeight)
+                                .windowInsetsPadding(WindowInsets.displayCutout),
+                        )
+                    }
+                }
+                InstrumentBar(
+                    state,
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .onSizeChanged { barHeight = with(density) { it.height.toDp() } },
+                )
+            }
         }
 
-        // The settings drawer
-        AnimatedVisibility(settingsOpen, enter = fadeIn(), exit = fadeOut()) {
+        // The drawer
+        AnimatedVisibility(drawer != null, enter = fadeIn(), exit = fadeOut()) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.28f)).noRippleClick {
-                focus.clearFocus(); onSettingsOpen(false)
+                focus.clearFocus(); onDrawer(null)
             })
         }
         AnimatedVisibility(
-            settingsOpen,
+            drawer != null,
             enter = slideInHorizontally { it },
             exit = slideOutHorizontally { it },
             modifier = Modifier.align(Alignment.CenterEnd),
         ) {
+            // Keeps the last panel while it slides out.
+            var shown by remember { mutableStateOf(SimDrawer.SETTINGS) }
+            if (drawer != null) shown = drawer
             BoxWithConstraints {
                 val drawerWidth = minOf(400.dp, maxWidth * 0.48f)
+                val s = LocalStrings.current
                 Drawer(
-                    title = LocalStrings.current("Settings"),
+                    title = s(shown.titleKey),
                     modifier = Modifier.width(drawerWidth),
-                    onClose = { focus.clearFocus(); onSettingsOpen(false) },
+                    onClose = { focus.clearFocus(); onDrawer(null) },
                 ) {
-                    SettingsContent(
-                        state, engine,
-                        onOpenStartPoint = { choosingStart = true },
-                        onChoosePicture = onChoosePicture,
-                        onEditPicture = { onEditDropzone(true) },
-                        onApply = { onSettingsOpen(false) },
-                    )
+                    when (shown) {
+                        SimDrawer.SETTINGS -> {
+                            ProBlock(host.pro, host.trial, host.trialEnforced) { showingPro = true }
+                            SettingsContent(
+                                state, engine,
+                                language = host.language,
+                                onOpenStartPoint = { choosingStart = true },
+                                onChoosePicture = host.onChoosePicture,
+                                onEditPicture = { onEditDropzone(true) },
+                                onApply = { onDrawer(null) },
+                                pictureLocked = isCasting,
+                            )
+                        }
+                        SimDrawer.MOTION_CAPTURE -> MocapPanel(capture, host.onToggleCamera, host.onOpenAppSettings)
+                    }
                 }
             }
         }
 
-        if (editingDropzone && state.dropzoneImage != null) {
+        if (editingDropzone && state.dropzoneImage != null && !isCasting) {
             DropzoneEditor(state, engine) { focus.clearFocus(); onEditDropzone(false) }
         }
         if (choosingStart) {
@@ -140,18 +198,39 @@ fun SimulatorScreen(
                 StartPointScreen(state, engine) { choosingStart = false }
             }
         }
+        if (showingPro) {
+            ProUpgradeScreen(host.pro, trialUsedUp = false) { showingPro = false }
+        }
     }
 }
 
 @Composable
-private fun Hud(state: UiState, engine: SimulatorEngine, barHeight: androidx.compose.ui.unit.Dp, drawerOpen: Boolean, onOpenSettings: () -> Unit) {
+private fun Hud(
+    state: UiState,
+    engine: SimulatorEngine,
+    capture: MotionCaptureController,
+    barHeight: Dp,
+    drawerOpen: Boolean,
+    compactTools: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenMotionCapture: () -> Unit,
+    onCast: () -> Unit,
+) {
     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.displayCutout)) {
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(barHeight))
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                BrakeControls(state, engine)
+                // The toggle and its touch column own the right edge; the
+                // altimeter sits just inside them. With motion capture the
+                // arms are the toggles and the camera picture floats top left.
+                val toggleColumn = if (capture.active) 0.dp else 10.dp + 56.dp + 10.dp
+                if (capture.active) {
+                    Box(Modifier.align(Alignment.TopStart).padding(top = 4.dp, start = 2.dp)) { MocapPreviewBox(capture) }
+                } else {
+                    BrakeControls(state, engine)
+                }
                 Box(Modifier.align(Alignment.TopCenter).padding(top = 6.dp)) { ModeChip(state) }
-                Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 10.dp + 56.dp + 10.dp + 8.dp)) {
+                Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = toggleColumn + 8.dp)) {
                     AltimeterFace(state.display.altitude, state.units)
                 }
                 val showsStart = state.isPaused && !drawerOpen && state.replay == null &&
@@ -168,7 +247,7 @@ private fun Hud(state: UiState, engine: SimulatorEngine, barHeight: androidx.com
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TransportButtons(state, engine)
                     Spacer(Modifier.weight(1f))
-                    ToolButtons(state, engine, onOpenSettings)
+                    ToolButtons(state, engine, capture.active, false, onOpenSettings, onOpenMotionCapture, onCast, stacked = compactTools)
                 }
             }
         }

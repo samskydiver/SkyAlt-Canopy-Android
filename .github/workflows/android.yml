@@ -14,12 +14,24 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
-      - name: Build APKs
-        run: ./gradlew --no-daemon assembleDebug assembleRelease
+      - name: Upload key from the repository secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+            echo "UPLOAD_KEYSTORE_PATH=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+          else
+            echo "No UPLOAD_KEYSTORE_BASE64 secret: the release build uses the debug key."
+          fi
+      - name: Build APKs and the Play bundle
+        env:
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+        run: ./gradlew --no-daemon assembleDebug assembleRelease bundleRelease
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
@@ -28,13 +40,17 @@ jobs:
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
       - name: Publish the APK as a GitHub release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${GITHUB_REF_NAME}" = "main" ]; then TAG=latest; FLAGS=""; else TAG=preview; FLAGS="--prerelease"; fi
           cp app/build/outputs/apk/release/app-release.apk CanopySimulator.apk
+          # The development build: no free-session limit, for testing.
+          cp app/build/outputs/apk/debug/app-debug.apk CanopySimulator-dev.apk
+          # The bundle Google Play takes, signed with the upload key.
+          cp app/build/outputs/bundle/release/app-release.aab CanopySimulator.aab
           gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" CanopySimulator.apk $FLAGS --title "Canopy Simulator ($GITHUB_REF_NAME)" --notes "Built from ${GITHUB_SHA} on ${GITHUB_REF_NAME}." --target "${GITHUB_SHA}"
+          gh release create "$TAG" CanopySimulator.apk CanopySimulator-dev.apk CanopySimulator.aab $FLAGS --title "Canopy Simulator ($GITHUB_REF_NAME)" --notes "Built from ${GITHUB_SHA} on ${GITHUB_REF_NAME}." --target "${GITHUB_SHA}"
     permissions:
       contents: write
