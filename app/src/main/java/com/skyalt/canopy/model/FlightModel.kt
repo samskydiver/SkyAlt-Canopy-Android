@@ -78,6 +78,22 @@ class AeroParameters(performance: CanopyPerformance) {
     var trimGlideAngle = -atan2(1.0, 3.0)
     var trimSinkRate = 3.8
     var trimForwardSpeed = 11.4
+    /**
+     * The front risers pull the leading edge down and take angle of attack
+     * off the wing: at a full pull on both, the lift coefficient loses this
+     * share and the profile drag that share.
+     */
+    var frontRiserLiftCut = 0.65
+    var frontRiserDragCut = 0.45
+    /** How much of a pull on one riser counts as a pull on both, for the nose-down. */
+    var frontRiserDifferentialShare = 0.75
+    /** The nose-down comes with the first part of the pull: it saturates this many times faster than the pull. */
+    var frontRiserPitchGain = 1.8
+    /** The bank one front riser rolls the canopy to at a full pull. */
+    var frontRiserBank = 70 * DEG
+    /** Seconds the nose-down takes to come with the pull, and to swing back once the risers are let up. */
+    var frontRiserPitchIn = 0.5
+    var frontRiserPitchOut = 1.5
 
     init {
         apply(performance)
@@ -94,6 +110,7 @@ class AeroParameters(performance: CanopyPerformance) {
         liftCoefficientPerBrake = liftCoefficient0 * (performance.coefficients.brakeLiftRatio - 1)
         dragCoefficientPerBrake = 0.20 * liftCoefficient0 / 0.55
         maximumBank = performance.maximumBank
+        frontRiserBank = min(80 * DEG, maximumBank + 10 * DEG)
         bankTimeConstant = performance.bankTimeConstant
         yawGain = DIRECT_YAW_SHARE * performance.coefficients.turnGain / max(1.0, performance.span)
         trimForwardSpeed = v * cos(trimGlideAngle)
@@ -103,11 +120,16 @@ class AeroParameters(performance: CanopyPerformance) {
     fun stallDepth(brake: Double, studentMode: Boolean) =
         if (studentMode) 0.0 else smoothStep(stallStart, stallFull, brake)
 
-    /** Lift and drag coefficients for a common stroke [ds] with the stall developed. */
-    fun coefficients(ds: Double, stall: Double): Pair<Double, Double> {
+    /**
+     * Lift and drag coefficients for a common stroke [ds] with the stall
+     * developed. The front risers' nose-down [dive] (0…1) takes lift and
+     * profile drag off instead.
+     */
+    fun coefficients(ds: Double, stall: Double, dive: Double = 0.0): Pair<Double, Double> {
         val linearLift = liftCoefficient0 + liftCoefficientPerBrake * ds
-        val lift = linearLift * (1 - 0.65 * stall)
-        val drag = dragCoefficient0 + dragCoefficientPerBrake * ds + inducedDragFactor * lift * lift + 0.55 * stall
+        val lift = linearLift * (1 - 0.65 * stall) * (1 - frontRiserLiftCut * dive)
+        val drag = dragCoefficient0 * (1 - frontRiserDragCut * dive) + dragCoefficientPerBrake * ds +
+            inducedDragFactor * lift * lift + 0.55 * stall
         return lift to drag
     }
 
@@ -310,6 +332,10 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
     var position: Vec3
     var velocity: Vec3
     var bank = 0.0
+    /** The share of the bank the front risers hold. */
+    var riserBank = 0.0
+    /** The nose-down the front risers have given, 0…1: it lags the pull and swings back slowly after the release. */
+    var dive = 0.0
     var pitch = -12 * DEG
     var glideAngleRate = 0.0
     var time = 0.0
@@ -346,10 +372,22 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         heading = start.heading
     }
 
-    fun step(dt: Double, leftBrake: Double, rightBrake: Double, p: AeroParameters, w: Vec3, studentMode: Boolean, turbulence: Double = 0.0) {
+    /**
+     * One step of the flight. The toggles are [leftBrake] and [rightBrake],
+     * 0…1; the front risers [leftRiser] and [rightRiser], 0…1, are only
+     * pulled by the computer-flown swoopers (the player's canopy leaves them
+     * at 0): a pull on both takes the nose down, a pull on one also rolls
+     * the canopy into a diving turn that way.
+     */
+    fun step(
+        dt: Double, leftBrake: Double, rightBrake: Double, p: AeroParameters, w: Vec3, studentMode: Boolean,
+        turbulence: Double = 0.0, leftRiser: Double = 0.0, rightRiser: Double = 0.0,
+    ) {
         if (landed || accident) return
         val da = rightBrake - leftBrake
         val ds = min(leftBrake, rightBrake) + p.differentialEffectiveness * abs(da)
+        val fa = rightRiser - leftRiser
+        val pull = min(1.0, p.frontRiserPitchGain * (min(leftRiser, rightRiser) + p.frontRiserDifferentialShare * abs(fa)))
         // Turbulence from a wake rolls the wing about, faster than the
         // toggles do, shakes its lift and yaws it; held in strong
         // turbulence the cells empty.
@@ -372,8 +410,16 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         }
         wakeCollapse = 1 - inflation
         val authority = 0.1 + 0.9 * inflation
-        val bankTarget = (p.maximumBank * da).clamp(-p.maximumBank, p.maximumBank) * authority + turbulence * 0.5 * gust[0]
-        bank += (bankTarget - bank) * (1 - exp(-dt / (p.bankTimeConstant * (1 - 0.6 * turbulence))))
+        val toggleBank = (p.maximumBank * da).clamp(-p.maximumBank, p.maximumBank) * authority
+        val riserBankTarget = p.frontRiserBank * fa * authority
+        val bankLimit = max(p.maximumBank, p.frontRiserBank)
+        val bankTarget = (toggleBank + riserBankTarget).clamp(-bankLimit, bankLimit) + turbulence * 0.5 * gust[0]
+        val bankStep = 1 - exp(-dt / (p.bankTimeConstant * (1 - 0.6 * turbulence)))
+        bank += (bankTarget - bank) * bankStep
+        riserBank += (riserBankTarget - riserBank) * bankStep
+        // The nose-down the fronts give takes a moment to come, and longer
+        // to swing back once they are let up.
+        dive += (pull - dive) * (1 - exp(-dt / (if (pull > dive) p.frontRiserPitchIn else p.frontRiserPitchOut)))
         val vh = va / speed
         var n = Vec3(-vh.x * vh.y, 1 - vh.y * vh.y, -vh.z * vh.y)
         n = n / max(n.length, 1e-6)
@@ -389,7 +435,7 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         }
         stall = smoothStep(phase, 2 * phase, stallSeconds)
         collapse = max(smoothStep(2 * phase, 3 * phase, stallSeconds), wakeCollapse)
-        val (cl, cd) = p.coefficients(ds, stall)
+        val (cl, cd) = p.coefficients(ds, stall, dive)
         val bankCut = 1 - p.bankDive * (1 - cos(bank))
         val liftShake = 1 - 0.35 * turbulence * (0.5 + 0.5 * gust[1])
         val effectiveLift = max(0.05, cl * bankCut * liftShake * (1 - 0.95 * collapse) - p.pitchRateLiftLoss * glideAngleRate)
@@ -406,7 +452,8 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
             v = Vec3(v.x - (v.x - w.x) * bleed, v.y, v.z - (v.z - w.z) * bleed)
         }
         if (p.maximumBank > 0 && p.yawGain > 0) {
-            val yaw = (p.yawGain * speed * (bank / p.maximumBank) + turbulence * 0.5 * gust[2]) * dt
+            // The front risers' bank turns the canopy by the lift alone, with no toggle yaw.
+            val yaw = (p.yawGain * speed * ((bank - riserBank) / p.maximumBank) + turbulence * 0.5 * gust[2]) * dt
             val air = Vec3(v.x - w.x, v.y, v.z - w.z)
             val tx = air.x * cos(yaw) - air.z * sin(yaw)
             val tz = air.x * sin(yaw) + air.z * cos(yaw)
@@ -433,7 +480,7 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
             // No forward speed through the air: the heading stays where it was.
             turnRate *= exp(-dt / 0.3)
         }
-        val pitchTarget = (-12 + 26 * ds + 10 * stall + 15 * wakeCollapse) * DEG + 0.5 * (glideAngle - p.trimGlideAngle) + turbulence * 0.3 * gust[3]
+        val pitchTarget = (-12 + 26 * ds + 10 * stall + 15 * wakeCollapse - 25 * dive) * DEG + 0.5 * (glideAngle - p.trimGlideAngle) + turbulence * 0.3 * gust[3]
         pitch += (pitchTarget - pitch) * (1 - exp(-dt / 0.5))
         velocity = v
 
@@ -535,6 +582,13 @@ class BrakeInputs {
     var right = 0.0
     var handSpeed = 2.0
     var releaseSpeed = 4.0
+    /** The front risers, 0…1 each: slow to pull, quicker to let up. */
+    var targetLeftRiser = 0.0
+    var targetRightRiser = 0.0
+    var leftRiser = 0.0
+    var rightRiser = 0.0
+    var riserPullSpeed = 1.0
+    var riserReleaseSpeed = 2.0
 
     /** [capture] holds the motion-capture pulls (left, right) while the arms fly the canopy. */
     fun update(dt: Double, capture: Pair<Double, Double>? = null) {
@@ -550,10 +604,15 @@ class BrakeInputs {
         val releaseStep = max(handSpeed, releaseSpeed) * dt
         left += (targetLeft - left).clamp(-releaseStep, step)
         right += (targetRight - right).clamp(-releaseStep, step)
+        val pull = riserPullSpeed * dt
+        val letUp = riserReleaseSpeed * dt
+        leftRiser += (targetLeftRiser - leftRiser).clamp(-letUp, pull)
+        rightRiser += (targetRightRiser - rightRiser).clamp(-letUp, pull)
     }
 
     fun release() {
         targetLeft = 0.0; targetRight = 0.0; left = 0.0; right = 0.0
+        targetLeftRiser = 0.0; targetRightRiser = 0.0; leftRiser = 0.0; rightRiser = 0.0
     }
 }
 

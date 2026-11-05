@@ -197,12 +197,19 @@ fun ScenarioPanel(state: UiState, engine: SimulatorEngine, scenario: Scenario, o
  * and so does Back on the way out.
  */
 @Composable
-fun ScenarioPicker(state: UiState, engine: SimulatorEngine, onChoose: (SimulatorMode) -> Unit, onBack: () -> Unit) {
+fun ScenarioPicker(state: UiState, engine: SimulatorEngine, onChooseLogo: () -> Unit, onChoose: (SimulatorMode) -> Unit, onBack: () -> Unit) {
     val s = LocalStrings.current
     val p = LocalPalette.current
-    // The hidden aircraft touchdown setting, behind seven quick taps on the picture.
+    // The hidden aircraft settings behind quick taps on the picture: four open the markings page, seven the touchdown setting.
+    var showsAircraftMarkings by remember { mutableStateOf(false) }
     var showsTouchdownSetting by remember { mutableStateOf(false) }
     val livery = state.aircraftLivery.colorHex
+    val markings = state.aircraftMarkings
+    val logo = state.aircraftLogo
+    if (showsAircraftMarkings) {
+        AircraftMarkingsPage(state, engine, onChooseLogo) { showsAircraftMarkings = false }
+        return
+    }
     Box(Modifier.fillMaxSize().background(p.background).noRippleClick {}) {
         Column(
             Modifier
@@ -240,10 +247,20 @@ fun ScenarioPicker(state: UiState, engine: SimulatorEngine, onChoose: (Simulator
                     AndroidView(
                         factory = { context ->
                             ExitSceneView(context).also { view ->
-                                view.onSecretTaps = { showsTouchdownSetting = true }
+                                view.onQuickTaps = { taps ->
+                                    when (taps) {
+                                        4 -> { showsTouchdownSetting = false; showsAircraftMarkings = true }
+                                        7 -> showsTouchdownSetting = true
+                                    }
+                                }
                             }
                         },
-                        update = { view -> view.liveryHex = livery },
+                        update = { view ->
+                            view.liveryHex = livery
+                            view.registration = markings.registration
+                            view.logo = logo
+                            view.logoPlacement = markings.logo
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                     Box(Modifier.align(Alignment.BottomEnd).padding(10.dp)) {
@@ -396,7 +413,7 @@ private fun ScenarioRow(current: Boolean, badge: String?, title: String, summary
         ) {
             val tint = if (current) p.background else p.foreground
             if (badge != null) Text(badge, style = displayStyle(16.sp), color = tint)
-            else Icon(SimIcons.Figure, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+            else ParachuteIcon(tint, Modifier.size(19.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)

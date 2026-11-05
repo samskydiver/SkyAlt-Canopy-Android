@@ -9,6 +9,7 @@ import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.Matrix
 import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AeroParameters
 import com.skyalt.canopy.model.AircraftState
 import com.skyalt.canopy.model.CloudSettings
@@ -183,6 +184,8 @@ class SceneController {
     private var airfieldSolids: List<GpuPart>? = null
     private var aircraftVisible = false
     private var aircraftLivery = AircraftLiverySettings.DEFAULT_COLOR_HEX
+    private var aircraftMarkings = AircraftMarkingsSettings()
+    private var aircraftLogo: android.graphics.Bitmap? = null
     private var aircraftBody: List<GpuPart>? = null
     private var aircraftPropeller: List<GpuPart>? = null
     private var aircraftHub = V3(0f, 0f, 0f)
@@ -826,6 +829,16 @@ class SceneController {
         aircraftBody = null; aircraftPropeller = null
     }
 
+    /** The registration and the logo on the aircraft's sides; the model is built again with them. GL thread. */
+    fun setAircraftMarkings(markings: AircraftMarkingsSettings, logo: android.graphics.Bitmap?) {
+        if (markings == aircraftMarkings && logo === aircraftLogo) return
+        aircraftMarkings = markings
+        aircraftLogo = logo
+        aircraftBody?.forEach { it.release() }
+        aircraftPropeller?.forEach { it.release() }
+        aircraftBody = null; aircraftPropeller = null
+    }
+
     fun setAircraft(visible: Boolean) {
         aircraftVisible = visible
         if (!visible) aircraftPlaced = false
@@ -861,7 +874,7 @@ class SceneController {
         }
         if (aircraftVisible && aircraftPlaced && aircraftPresent) {
             if (aircraftBody == null) {
-                val built = Models.aircraft(aircraftLivery)
+                val built = Models.aircraft(aircraftLivery, aircraftMarkings.registration, aircraftLogo, aircraftMarkings.logo)
                 aircraftBody = GpuPart.of(built.body)
                 aircraftPropeller = GpuPart.of(built.propeller)
                 aircraftHub = built.hub

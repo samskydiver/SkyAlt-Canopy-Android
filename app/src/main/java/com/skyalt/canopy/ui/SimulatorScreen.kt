@@ -70,6 +70,8 @@ class SimulatorHost(
     val trialEnforced: Boolean,
     val language: LanguageSetting,
     val onChoosePicture: () -> Unit,
+    /** Opens the photo picker for the logo on the aircraft's sides. */
+    val onChooseLogo: () -> Unit,
     val onToggleCamera: () -> Unit,
     val onOpenAppSettings: () -> Unit,
     val onOpenCastSettings: () -> Unit,
@@ -257,7 +259,7 @@ fun SimulatorScreen(
             }
         }
         if (choosingScenario) {
-            ScenarioPicker(state, engine, onChoose = { choose(it) }, onBack = { leaveScenarioPicker() })
+            ScenarioPicker(state, engine, onChooseLogo = host.onChooseLogo, onChoose = { choose(it) }, onBack = { leaveScenarioPicker() })
         }
         if (showingPro) {
             ProUpgradeScreen(host.pro, trialUsedUp = false, onClose = { showingPro = false })
