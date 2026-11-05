@@ -44,6 +44,29 @@ data class TrafficSettings(
     }
 }
 
+/** The paint on the aircraft's wings and tail; the fuselage stays white. */
+data class AircraftLiverySettings(
+    /** 0xRRGGBB. */
+    val colorHex: Int = DEFAULT_COLOR_HEX,
+) {
+    val isDefault get() = colorHex == DEFAULT_COLOR_HEX
+
+    companion object {
+        const val DEFAULT_COLOR_HEX = 0xd42a1f
+    }
+}
+
+/** The hidden setting: how far past the threshold every aircraft touches down. */
+data class AircraftTouchdownSettings(
+    val metersFromThreshold: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD,
+) {
+    fun clamped() = copy(metersFromThreshold = metersFromThreshold.clamp(0.0, MAXIMUM_METERS))
+
+    companion object {
+        const val MAXIMUM_METERS = 500.0
+    }
+}
+
 /** A puff of turbulent air left behind a canopy or an aircraft: it grows and weakens with age, and sinks slowly. */
 class WakeSample(
     val position: Vec3,

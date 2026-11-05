@@ -53,10 +53,11 @@ enum class Scenario(val number: Int, val titleKey: String, val summaryKey: Strin
     /**
      * The setup the scene starts with: a 220 ft² student canopy at a wing
      * loading of 0.8, a left-hand pattern with the usual altitudes, the
-     * windsock 30 m east of the target.
+     * windsock 30 m east of the target. The aircraft scene's start follows
+     * where the aircraft touches down, [aircraftTouchdown] metres past the
+     * threshold.
      */
-    val configuration: SimulatorConfiguration
-        get() {
+    fun configuration(aircraftTouchdown: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD): SimulatorConfiguration {
             var setup = SimulatorConfiguration(
                 canopyType = CanopyType.STUDENT,
                 canopyAreaSquareFeet = 220.0,
@@ -82,8 +83,8 @@ enum class Scenario(val number: Int, val titleKey: String, val summaryKey: Strin
                 DOWNWIND -> setup.copy(windSpeed = 4.0, windDirectionDegrees = 90.0, finalHeadingDegrees = 270.0)
                 OBSTACLES -> setup.copy(startsAtFinalTurn = true, startAltitudeMeters = setup.finalAltitudeMeters)
             }
-            return setup.placedStart(this)
-        }
+            return setup.placedStart(this, aircraftTouchdown)
+    }
 }
 
 /**
@@ -107,8 +108,11 @@ enum class BaseLegWind(val windDirectionDegrees: Double) {
  * enough to reach the downwind entry at its altitude; or on the downwind
  * scene's leg over the point upwind of the target.
  */
-fun SimulatorConfiguration.placedStart(scenario: Scenario): SimulatorConfiguration = when (scenario) {
-    Scenario.AIRCRAFT -> startInWake(AircraftFlight.SCENARIO)
+fun SimulatorConfiguration.placedStart(
+    scenario: Scenario,
+    aircraftTouchdown: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD,
+): SimulatorConfiguration = when (scenario) {
+    Scenario.AIRCRAFT -> startInWake(AircraftFlight.scenario(aircraftTouchdown))
     Scenario.CROSSWIND -> copy(startAltitudeMeters = downwindAltitudeMeters + runInAltitudeLoss())
     Scenario.DOWNWIND -> startUpwindOnDownwindLeg()
     else -> this
@@ -187,10 +191,8 @@ object Airfield {
     const val RUNWAY_WIDTH = 30.0
     const val RUNWAY_WEST_X = -250.0
     const val RUNWAY_EAST_X = 750.0
-    /** The aircraft touches down this far inside the threshold it crosses… */
-    const val TOUCHDOWN_FROM_THRESHOLD = 300.0
-    /** …except in the aircraft scene, where it lands further along so its approach passes over the grass. */
-    const val SCENE_TOUCHDOWN_FROM_THRESHOLD = 700.0
+    /** Every aircraft touches down this far past the threshold it crosses, unless the hidden setting moves it. */
+    const val TOUCHDOWN_FROM_THRESHOLD = 100.0
     /** The hangar's footprint and the top of its roof ridge; the walls stop at [HANGAR_WALL_HEIGHT]. */
     const val HANGAR_MIN_X = 350.0
     const val HANGAR_MAX_X = 450.0
@@ -310,35 +312,36 @@ data class AircraftFlight(
         const val TRAIL_SECONDS_AT_START = 8.0
 
         /**
-         * The scenes' aircraft: landing eastward, 700 m past the western
-         * threshold, and just far enough out for the wake it left
-         * [SECONDS_AHEAD] ago to pass over a canopy at the start altitude.
+         * The scenes' aircraft: landing eastward, [touchdownFromThreshold]
+         * metres past the western threshold, and just far enough out for the
+         * wake it left [SECONDS_AHEAD] ago to pass over a canopy at the
+         * start altitude.
          */
-        val SCENARIO: AircraftFlight = run {
+        fun scenario(touchdownFromThreshold: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD): AircraftFlight {
             val flight = AircraftFlight(
-                touchdown = Vec3(Airfield.RUNWAY_WEST_X + Airfield.SCENE_TOUCHDOWN_FROM_THRESHOLD, 0.0, Airfield.RUNWAY_CENTRE_Z),
+                touchdown = Vec3(Airfield.RUNWAY_WEST_X + touchdownFromThreshold, 0.0, Airfield.RUNWAY_CENTRE_Z),
                 heading = 90 * DEG,
             )
             val wakeHeight = SCENARIO_START_ALTITUDE + 1 + CanopyMeshShape.LINE_LENGTH + WAKE_ABOVE_CANOPY
             val glideHeight = wakeHeight + WakeProfile.AIRCRAFT.sink * SECONDS_AHEAD - GROUND_HEIGHT
-            flight.copy(startDistance = glideHeight / tan(flight.approachAngle) - flight.approachSpeed * SECONDS_AHEAD)
+            return flight.copy(startDistance = glideHeight / tan(flight.approachAngle) - flight.approachSpeed * SECONDS_AHEAD)
         }
 
         /** The other scenes' aircraft, when switched on: the same approach, flown again and again. */
-        val CIRCUIT = SCENARIO.copy(repeats = true)
+        fun circuit(touchdownFromThreshold: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD) = scenario(touchdownFromThreshold).copy(repeats = true)
 
         /**
          * Free practice's aircraft: landing on the runway drawn on the
          * dropzone picture in the direction nearest the final heading
          * (radians), touching down inside the threshold, again and again.
          */
-        fun landing(runway: RunwayGeometry, finalHeading: Double): AircraftFlight {
+        fun landing(runway: RunwayGeometry, finalHeading: Double, touchdownFromThreshold: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD): AircraftFlight {
             var heading = runway.headingDegrees * DEG
             if (cos(heading - finalHeading) < 0) heading += PI
             val direction = Compass.direction(heading)
             val threshold = runway.centre - direction * (runway.lengthMeters / 2)
-            val rollIn = min(Airfield.TOUCHDOWN_FROM_THRESHOLD, runway.lengthMeters / 2)
-            return SCENARIO.copy(touchdown = threshold + direction * rollIn, heading = heading, repeats = true)
+            val rollIn = min(touchdownFromThreshold, runway.lengthMeters / 2)
+            return scenario().copy(touchdown = threshold + direction * rollIn, heading = heading, repeats = true)
         }
     }
 }

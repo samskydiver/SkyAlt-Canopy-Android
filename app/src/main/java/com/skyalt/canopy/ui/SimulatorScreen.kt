@@ -257,7 +257,7 @@ fun SimulatorScreen(
             }
         }
         if (choosingScenario) {
-            ScenarioPicker(state, onChoose = { choose(it) }, onBack = { leaveScenarioPicker() })
+            ScenarioPicker(state, engine, onChoose = { choose(it) }, onBack = { leaveScenarioPicker() })
         }
         if (showingPro) {
             ProUpgradeScreen(host.pro, trialUsedUp = false, onClose = { showingPro = false })

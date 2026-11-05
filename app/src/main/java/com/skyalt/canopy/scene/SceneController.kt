@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.Matrix
+import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.model.AeroParameters
 import com.skyalt.canopy.model.AircraftState
 import com.skyalt.canopy.model.CloudSettings
@@ -181,6 +182,7 @@ class SceneController {
     private var airfieldFlats: List<GpuPart>? = null
     private var airfieldSolids: List<GpuPart>? = null
     private var aircraftVisible = false
+    private var aircraftLivery = AircraftLiverySettings.DEFAULT_COLOR_HEX
     private var aircraftBody: List<GpuPart>? = null
     private var aircraftPropeller: List<GpuPart>? = null
     private var aircraftHub = V3(0f, 0f, 0f)
@@ -815,6 +817,15 @@ class SceneController {
         airfieldVisible = visible
     }
 
+    /** The colour of the aircraft's wings and tail, 0xRRGGBB; the model is built again in it. GL thread. */
+    fun setAircraftLivery(hex: Int) {
+        if (hex == aircraftLivery) return
+        aircraftLivery = hex
+        aircraftBody?.forEach { it.release() }
+        aircraftPropeller?.forEach { it.release() }
+        aircraftBody = null; aircraftPropeller = null
+    }
+
     fun setAircraft(visible: Boolean) {
         aircraftVisible = visible
         if (!visible) aircraftPlaced = false
@@ -850,7 +861,7 @@ class SceneController {
         }
         if (aircraftVisible && aircraftPlaced && aircraftPresent) {
             if (aircraftBody == null) {
-                val built = Models.aircraft()
+                val built = Models.aircraft(aircraftLivery)
                 aircraftBody = GpuPart.of(built.body)
                 aircraftPropeller = GpuPart.of(built.propeller)
                 aircraftHub = built.hub
