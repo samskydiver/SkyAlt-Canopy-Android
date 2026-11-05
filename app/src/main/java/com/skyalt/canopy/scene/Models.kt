@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.opengl.Matrix
+import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.model.Airfield
 import com.skyalt.canopy.model.V3
 import kotlin.math.PI
@@ -426,11 +427,12 @@ object Models {
      * long turboprop nose, a low wing with dihedral on the outer panels, a
      * tall swept fin with a dorsal fillet, fixed tricycle gear and a
      * three-bladed propeller. Nose to −z, the fuselage's centre at the origin.
+     * The wings and tail wear [livery] (0xRRGGBB); the fuselage stays white.
      */
-    fun aircraft(): Aircraft {
+    fun aircraft(livery: Int = AircraftLiverySettings.DEFAULT_COLOR_HEX): Aircraft {
         val parts = ArrayList<ModelPart>()
         val white = rgba(0xf4f4f4)
-        val orange = rgba(ORANGE)
+        val paint = rgba(livery)
         val glass = rgba(0x1a1f26)
         val dark = rgba(0x30343a)
         val rubber = rgba(0x15171a)
@@ -460,16 +462,16 @@ object Models {
             val tip = abs(x) > 6.35f
             return Shapes.aerofoilRing(x, V3(0f, -0.78f + outer * dihedral, if (tip) -1.75f else -1.85f), if (tip) 2.0f else 2.2f, if (tip) 0.12f else 0.15f)
         }
-        add(Shapes.loft(listOf(-6.4f, -2.6f, 2.6f, 6.4f).map(::wingRing), capped = true), color = orange)
+        add(Shapes.loft(listOf(-6.4f, -2.6f, 2.6f, 6.4f).map(::wingRing), capped = true), color = paint)
         // The tailplane on top of the tail cone, tapered and swept a little.
         fun tailRing(x: Float): List<V3> {
             val u = abs(x) / 2.48f
             return Shapes.aerofoilRing(x, V3(0f, 0.7f, 4.55f + 0.3f * u), 1.25f - 0.35f * u, 0.1f)
         }
-        add(Shapes.loft(listOf(-2.48f, 0f, 2.48f).map(::tailRing), capped = true), color = orange)
+        add(Shapes.loft(listOf(-2.48f, 0f, 2.48f).map(::tailRing), capped = true), color = paint)
         // The fin with its dorsal fillet, drawn in side view and turned to stand along the fuselage.
         val fin = listOf(2.6f to 0.8f, 3.8f to 1.1f, 4.95f to 2.25f, 5.55f to 2.25f, 5.6f to 0.6f, 4.0f to 0.74f)
-        add(Shapes.extrude(fin, 0.14f), Xf().r(-PI.toFloat() / 2, 0f, 1f, 0f), orange)
+        add(Shapes.extrude(fin, 0.14f), Xf().r(-PI.toFloat() / 2, 0f, 1f, 0f), paint)
 
         // The registration in black on both sides of the rear fuselage and under the left wing.
         val registration = registrationImage("SZ-520")

@@ -84,4 +84,33 @@ class FlightModelTest {
         assertEquals(115.0, c.baseAltitudeMeters, 1e-9)
         assertEquals(130.0, c.downwindAltitudeMeters, 1e-9)
     }
+
+    @Test
+    fun strongWakeEmptiesTheCellsAndCleanAirRefillsThem() {
+        val configuration = Scenario.AIRCRAFT.configuration()
+        val aero = AeroParameters(configuration.performance)
+        val state = FlightState(Vec3(0.0, 2_000.0, 0.0), 0.0, aero, Vec3(0.0, 0.0, 0.0))
+        val dt = 1.0 / 120
+        repeat(360) { state.step(dt, 0.0, 0.0, aero, Vec3(0.0, 0.0, 0.0), true, turbulence = 1.0) }
+        assertTrue("cells empty in a strong wake: ${state.inflation}", state.inflation < 0.1)
+        val forward = hypot(state.velocity.x, state.velocity.z)
+        assertTrue("forward speed bleeds away: $forward", forward < 0.3 * aero.trimForwardSpeed)
+        repeat(1_200) { state.step(dt, 0.0, 0.0, aero, Vec3(0.0, 0.0, 0.0), true) }
+        assertTrue("cells refill in clean air: ${state.inflation}", state.inflation > 0.95)
+    }
+
+    @Test
+    fun weakWakeOnlyShakesAtTrimButBrakesDeflate() {
+        val configuration = Scenario.AIRCRAFT.configuration()
+        val aero = AeroParameters(configuration.performance)
+        val trim = FlightState(Vec3(0.0, 2_000.0, 0.0), 0.0, aero, Vec3(0.0, 0.0, 0.0))
+        val braked = FlightState(Vec3(0.0, 2_000.0, 0.0), 0.0, aero, Vec3(0.0, 0.0, 0.0))
+        val dt = 1.0 / 120
+        repeat(600) {
+            trim.step(dt, 0.0, 0.0, aero, Vec3(0.0, 0.0, 0.0), true, turbulence = 0.4)
+            braked.step(dt, 1.0, 1.0, aero, Vec3(0.0, 0.0, 0.0), true, turbulence = 0.4)
+        }
+        assertTrue("weak wake at trim keeps the cells: ${trim.inflation}", trim.inflation > 0.9)
+        assertTrue("braking in it deflates them: ${braked.inflation}", braked.inflation < trim.inflation - 0.2)
+    }
 }

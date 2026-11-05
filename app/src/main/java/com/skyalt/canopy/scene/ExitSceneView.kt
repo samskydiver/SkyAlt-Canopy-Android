@@ -7,10 +7,12 @@ import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.sim.MultisampleConfigChooser
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.sin
@@ -20,7 +22,8 @@ import kotlin.math.sqrt
  * The scene page's picture: the AFF exit, the student and two instructors
  * just out of the P750's door on jump run, its propeller turning. One
  * finger turns the view round them, two fingers move it and a pinch zooms,
- * as SceneKit's camera control on iOS. Port of CanopyExitScene.swift.
+ * as SceneKit's camera control on iOS. Seven quick taps open the hidden
+ * settings. Port of CanopyExitScene.swift.
  */
 @SuppressLint("ViewConstructor")
 class ExitSceneView(context: Context) : GLSurfaceView(context) {
@@ -35,6 +38,18 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
     private var lastY = 0f
     private var lastCentroidX = 0f
     private var lastCentroidY = 0f
+
+    /** The colour of the aircraft's wings and tail, 0xRRGGBB; the aircraft is built again when it changes. */
+    @Volatile var liveryHex: Int = AircraftLiverySettings.DEFAULT_COLOR_HEX
+    /** Seven quick taps on the picture: the way in to the hidden settings. */
+    var onSecretTaps: () -> Unit = {}
+    private var downX = 0f
+    private var downY = 0f
+    private var downTime = 0L
+    private var lastTapTime = 0L
+    private var taps = 0
+    private var moved = false
+    private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -58,9 +73,14 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 lastX = event.x; lastY = event.y
+                downX = event.x; downY = event.y; downTime = event.eventTime; moved = false
                 parent?.requestDisallowInterceptTouchEvent(true)
             }
-            MotionEvent.ACTION_POINTER_DOWN -> centroid(event, skip = -1).let { (x, y) -> lastCentroidX = x; lastCentroidY = y }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                moved = true
+                centroid(event, skip = -1).let { (x, y) -> lastCentroidX = x; lastCentroidY = y }
+            }
+            MotionEvent.ACTION_UP -> countTap(event)
             MotionEvent.ACTION_POINTER_UP -> {
                 val keep = if (event.actionIndex == 0) 1 else 0
                 lastX = event.getX(keep); lastY = event.getY(keep)
@@ -81,6 +101,7 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
                 panY += (ce * dy) * k
                 panZ += (sa * dx + -se * ca * dy) * k
             } else if (!scaleDetector.isInProgress) {
+                if (abs(event.x - downX) > touchSlop || abs(event.y - downY) > touchSlop) moved = true
                 val density = resources.displayMetrics.density
                 val dx = (event.x - lastX) / density
                 val dy = (event.y - lastY) / density
@@ -90,6 +111,17 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
             }
         }
         return true
+    }
+
+    /** Counts quick taps, each within 400 ms of the last; the seventh opens the hidden settings. */
+    private fun countTap(event: MotionEvent) {
+        if (moved || event.eventTime - downTime > 300) { taps = 0; return }
+        taps = if (event.eventTime - lastTapTime <= 400) taps + 1 else 1
+        lastTapTime = event.eventTime
+        if (taps >= 7) {
+            taps = 0
+            onSecretTaps()
+        }
     }
 
     /** The middle of the fingers on the screen, leaving out the one at [skip] (lifting). */
@@ -109,6 +141,7 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         private var propeller: List<GpuPart> = emptyList()
         private var formation: List<GpuPart> = emptyList()
         private var hub = com.skyalt.canopy.model.V3(0f, 0f, 0f)
+        private var builtLivery = 0
         private var width = 1
         private var height = 1
         private var start = 0L
@@ -121,12 +154,17 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
             shader = SceneShader()
             sky = SkyShader()
-            val aircraft = Models.aircraft()
+            buildAircraft()
+            formation = GpuPart.of(Models.exitFormation())
+            start = System.nanoTime()
+        }
+
+        private fun buildAircraft() {
+            builtLivery = liveryHex
+            val aircraft = Models.aircraft(builtLivery)
             body = GpuPart.of(aircraft.body)
             propeller = GpuPart.of(aircraft.propeller)
             hub = aircraft.hub
-            formation = GpuPart.of(Models.exitFormation())
-            start = System.nanoTime()
         }
 
         override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
@@ -134,6 +172,11 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         }
 
         override fun onDrawFrame(gl: GL10?) {
+            if (builtLivery != liveryHex) {
+                body.forEach { it.release() }
+                propeller.forEach { it.release() }
+                buildAircraft()
+            }
             GLES30.glViewport(0, 0, width, height)
             GLES30.glClearColor(0.788f, 0.847f, 0.902f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)

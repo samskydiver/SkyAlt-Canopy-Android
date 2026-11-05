@@ -38,6 +38,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.window.Dialog
+import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftTouchdownSettings
 import com.skyalt.canopy.model.BaseLegWind
 import com.skyalt.canopy.model.Scenario
 import com.skyalt.canopy.model.SimulatorMode
@@ -76,6 +88,7 @@ fun TrafficPanel(state: UiState, engine: SimulatorEngine, onSetRunway: () -> Uni
             Text("${TrafficSettings.MAXIMUM_COUNT}", fontSize = 11.sp, color = p.muted)
         }
         SwitchRow(s("Show wake turbulence"), traffic.showsWakes) { on -> engine.updateTraffic { it.copy(showsWakes = on) } }
+        Note(s("In a wake the cells lose pressure and the canopy slows; braking there makes it worse."))
         if (state.scenario == null) {
             SwitchRow(s("An aircraft is landing"), state.aircraftLanding) { on ->
                 if (on && state.dropzone.runwayGeometry == null) onSetRunway() else engine.setAircraftLanding(on)
@@ -184,9 +197,12 @@ fun ScenarioPanel(state: UiState, engine: SimulatorEngine, scenario: Scenario, o
  * and so does Back on the way out.
  */
 @Composable
-fun ScenarioPicker(state: UiState, onChoose: (SimulatorMode) -> Unit, onBack: () -> Unit) {
+fun ScenarioPicker(state: UiState, engine: SimulatorEngine, onChoose: (SimulatorMode) -> Unit, onBack: () -> Unit) {
     val s = LocalStrings.current
     val p = LocalPalette.current
+    // The hidden aircraft touchdown setting, behind seven quick taps on the picture.
+    var showsTouchdownSetting by remember { mutableStateOf(false) }
+    val livery = state.aircraftLivery.colorHex
     Box(Modifier.fillMaxSize().background(p.background).noRippleClick {}) {
         Column(
             Modifier
@@ -218,10 +234,139 @@ fun ScenarioPicker(state: UiState, onChoose: (SimulatorMode) -> Unit, onBack: ()
                     }
                 }
                 // The moment of exit, its top level with the first scene: a drag looks round it, a pinch zooms.
+                // In its bottom corner, the aircraft's paint.
                 val shape = RoundedCornerShape(12.dp)
                 Box(Modifier.weight(1f).fillMaxHeight().clip(shape).border(1.dp, p.line, shape)) {
-                    AndroidView(factory = { ExitSceneView(it) }, modifier = Modifier.fillMaxSize())
+                    AndroidView(
+                        factory = { context ->
+                            ExitSceneView(context).also { view ->
+                                view.onSecretTaps = { showsTouchdownSetting = true }
+                            }
+                        },
+                        update = { view -> view.liveryHex = livery },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(Modifier.align(Alignment.BottomEnd).padding(10.dp)) {
+                        AircraftPaintControl(livery) { engine.setAircraftLiveryColor(it) }
+                    }
                 }
+            }
+        }
+    }
+    if (showsTouchdownSetting) {
+        AircraftTouchdownDialog(
+            initial = state.aircraftTouchdown.metersFromThreshold,
+            onCancel = { showsTouchdownSetting = false },
+            onDone = { meters ->
+                engine.setAircraftTouchdown(meters)
+                showsTouchdownSetting = false
+            },
+        )
+    }
+}
+
+/** Colours offered for the aircraft's wings and tail; the first is the default red. */
+private val LIVERY_COLORS = listOf(
+    AircraftLiverySettings.DEFAULT_COLOR_HEX, 0xf07f1a, 0xf2c230, 0x2e8b57, 0x1a9e9e, 0x1f5fbf,
+    0x1b2a4a, 0x6a3fa0, 0xd6337a, 0x202020, 0xa8adb3, 0xf4f4f4,
+)
+
+/**
+ * The aircraft's paint: a swatch that opens the colours for the wings and
+ * tail, and, once the colour has been changed, the way back to the
+ * default red.
+ */
+@Composable
+private fun AircraftPaintControl(livery: Int, onPick: (Int) -> Unit) {
+    val s = LocalStrings.current
+    val p = LocalPalette.current
+    var open by remember { mutableStateOf(false) }
+    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (open) {
+            val shape = RoundedCornerShape(10.dp)
+            Column(
+                Modifier.background(p.surface, shape).border(1.dp, p.line, shape).padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                for (row in LIVERY_COLORS.chunked(6)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (hex in row) {
+                            Swatch(hex, selected = hex == livery, size = 26) {
+                                onPick(hex)
+                                open = false
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier
+                .background(p.surface.copy(alpha = 0.92f), CircleShape)
+                .border(1.dp, p.line, CircleShape)
+                .padding(start = 12.dp, end = 6.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(Icons.Filled.Brush, contentDescription = null, tint = p.muted, modifier = Modifier.size(14.dp))
+            Text(s("Aircraft paint"), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = p.foreground)
+            Swatch(livery, selected = open, size = 26) { open = !open }
+            if (livery != AircraftLiverySettings.DEFAULT_COLOR_HEX) {
+                Box(Modifier.size(24.dp).noRippleClick { onPick(AircraftLiverySettings.DEFAULT_COLOR_HEX); open = false }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Refresh, contentDescription = s("Default paint"), tint = p.foreground, modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+    }
+}
+
+/** A round patch of [hex], ringed while [selected]. */
+@Composable
+private fun Swatch(hex: Int, selected: Boolean, size: Int, onClick: () -> Unit) {
+    val p = LocalPalette.current
+    Box(
+        Modifier
+            .size(size.dp)
+            .border(if (selected) 2.dp else 1.dp, if (selected) p.accent else p.line, CircleShape)
+            .padding(3.dp)
+            .background(Color(0xff000000.toInt() or hex), CircleShape)
+            .clip(CircleShape)
+            .noRippleClick(onClick),
+    )
+}
+
+/**
+ * The hidden setting behind seven quick taps on the exit picture: how far
+ * past the threshold every aircraft touches down, kept on Done.
+ */
+@Composable
+private fun AircraftTouchdownDialog(initial: Double, onCancel: () -> Unit, onDone: (Double) -> Unit) {
+    val s = LocalStrings.current
+    val p = LocalPalette.current
+    var draft by remember { mutableStateOf(initial.toFloat()) }
+    Dialog(onDismissRequest = onCancel) {
+        val shape = RoundedCornerShape(12.dp)
+        Column(
+            Modifier.width(320.dp).background(p.surface, shape).border(1.dp, p.line, shape).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(s("Aircraft touchdown"), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
+            Note(s("Metres past the threshold the aircraft crosses, in every scene and in free practice."))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val maximum = AircraftTouchdownSettings.MAXIMUM_METERS.toFloat()
+                Slider(
+                    value = draft,
+                    onValueChange = { draft = (it / 10).roundToInt() * 10f },
+                    valueRange = 0f..maximum,
+                    steps = (maximum / 10).toInt() - 1,
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(thumbColor = p.accent, activeTrackColor = p.accent),
+                )
+                Text("${draft.roundToInt()} m", style = displayStyle(13.sp), color = p.foreground, modifier = Modifier.width(56.dp), textAlign = TextAlign.End)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
+                ChipButton(s("Cancel"), onClick = onCancel)
+                ChipButton(s("Done"), style = ChipStyle.PRIMARY) { onDone(draft.toDouble()) }
             }
         }
     }

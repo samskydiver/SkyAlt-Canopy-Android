@@ -3,6 +3,8 @@ package com.skyalt.canopy.sim
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftTouchdownSettings
 import com.skyalt.canopy.model.CanopyType
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.RunwayPlacement
@@ -185,6 +187,17 @@ class PreferencesStore(context: Context) : SimulatorStore {
         val j = JSONObject().put("count", t.count).put("showsWakes", t.showsWakes).put("aircraftLanding", t.aircraftLanding)
         prefs.edit().putString("traffic", j.toString()).apply()
     }
+
+    override fun loadAircraftLivery() =
+        AircraftLiverySettings(prefs.getInt("aircraft-livery", AircraftLiverySettings.DEFAULT_COLOR_HEX))
+
+    override fun saveAircraftLivery(l: AircraftLiverySettings) = prefs.edit().putInt("aircraft-livery", l.colorHex).apply()
+
+    override fun loadAircraftTouchdown() =
+        AircraftTouchdownSettings(prefs.getFloat("aircraft-touchdown", AircraftTouchdownSettings().metersFromThreshold.toFloat()).toDouble()).clamped()
+
+    override fun saveAircraftTouchdown(t: AircraftTouchdownSettings) =
+        prefs.edit().putFloat("aircraft-touchdown", t.metersFromThreshold.toFloat()).apply()
 
     override fun loadAutoFirstPerson() = prefs.getBoolean("auto-first-person", true)
     override fun saveAutoFirstPerson(on: Boolean) = prefs.edit().putBoolean("auto-first-person", on).apply()

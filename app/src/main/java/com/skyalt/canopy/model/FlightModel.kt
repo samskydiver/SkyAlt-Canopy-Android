@@ -241,7 +241,8 @@ data class FlightFrame(
     val altitude get() = max(0.0, position.y - 1)
     val groundSpeed get() = hypot(velocity.x, velocity.z)
     val sinkRate get() = -velocity.y
-    fun airspeed(wind: Vec3) = Vec3(velocity.x - wind.x, velocity.y, velocity.z - wind.z).length
+    /** Forward airspeed: the horizontal speed through the air, which the ram pressure in the cells follows. */
+    fun airspeed(wind: Vec3) = hypot(velocity.x - wind.x, velocity.z - wind.z)
     val distanceToTarget get() = hypot(SimConstants.TARGET.x - position.x, SimConstants.TARGET.z - position.z)
 
     companion object {
@@ -326,8 +327,8 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
     var turnRate = 0.0
     /** The turbulence the canopy is flying through, 0…1: a wake rolls the wing about and shakes its lift. */
     var turbulence = 0.0
-    /** Seconds of strong turbulence, which empty the cells; they refill in about two seconds of calm air. */
-    var wakeCollapseSeconds = 0.0
+    /** How full the cells are, 0…1: ram pressure keeps them full, a wake lets the pressure out. */
+    var inflation = 1.0
     /** How far the wake has collapsed the wing, 0…1. */
     var wakeCollapse = 0.0
     /** The run ended in a collision: nothing moves any more. */
@@ -354,12 +355,25 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         // turbulence the cells empty.
         this.turbulence = turbulence
         val gust = gust(time, gustPhase)
-        val bankTarget = (p.maximumBank * da).clamp(-p.maximumBank, p.maximumBank) + turbulence * 0.5 * gust[0]
-        bank += (bankTarget - bank) * (1 - exp(-dt / (p.bankTimeConstant * (1 - 0.6 * turbulence))))
 
         var v = velocity
         val va = Vec3(v.x - w.x, v.y, v.z - w.z)
         val speed = max(va.length, 1e-6)
+        // Ram pressure keeps the cells full; turbulence lets it out, the
+        // faster the slower the wing flies and the deeper the brakes.
+        // Past the threshold the cells empty, below it they refill with
+        // the ram pressure the airspeed brings.
+        val ram = min(1.0, (speed / p.trimForwardSpeed).let { it * it })
+        val deflating = turbulence * (1 + SLOW_DEFLATION * (1 - ram) + BRAKE_DEFLATION * ds)
+        inflation = if (deflating > DEFLATION_THRESHOLD) {
+            max(0.0, inflation - dt * (deflating - DEFLATION_THRESHOLD) * DEFLATION_RATE)
+        } else {
+            min(1.0, inflation + dt * (1 - deflating / DEFLATION_THRESHOLD) * ram * REINFLATION_RATE)
+        }
+        wakeCollapse = 1 - inflation
+        val authority = 0.1 + 0.9 * inflation
+        val bankTarget = (p.maximumBank * da).clamp(-p.maximumBank, p.maximumBank) * authority + turbulence * 0.5 * gust[0]
+        bank += (bankTarget - bank) * (1 - exp(-dt / (p.bankTimeConstant * (1 - 0.6 * turbulence))))
         val vh = va / speed
         var n = Vec3(-vh.x * vh.y, 1 - vh.y * vh.y, -vh.z * vh.y)
         n = n / max(n.length, 1e-6)
@@ -374,13 +388,6 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
             max(developed, stallSeconds - dt * SimConstants.STALL_RECOVERY_RATE)
         }
         stall = smoothStep(phase, 2 * phase, stallSeconds)
-        val gustThreshold = 0.55
-        wakeCollapseSeconds = if (turbulence > gustThreshold) {
-            min(2.0, wakeCollapseSeconds + dt * 2 * (turbulence - gustThreshold) / (1 - gustThreshold))
-        } else {
-            max(0.0, wakeCollapseSeconds - dt)
-        }
-        wakeCollapse = smoothStep(0.4, 1.6, wakeCollapseSeconds)
         collapse = max(smoothStep(2 * phase, 3 * phase, stallSeconds), wakeCollapse)
         val (cl, cd) = p.coefficients(ds, stall)
         val bankCut = 1 - p.bankDive * (1 - cos(bank))
@@ -393,6 +400,11 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         loadFactor = acceleration.length / p.gravity
         acceleration = Vec3(acceleration.x, acceleration.y - p.gravity, acceleration.z)
         v = v + acceleration * dt
+        // Empty cells fly nowhere: the forward airspeed bleeds away.
+        if (collapse > 0) {
+            val bleed = 1 - exp(-dt * COLLAPSE_FORWARD_DECAY * collapse)
+            v = Vec3(v.x - (v.x - w.x) * bleed, v.y, v.z - (v.z - w.z) * bleed)
+        }
         if (p.maximumBank > 0 && p.yawGain > 0) {
             val yaw = (p.yawGain * speed * (bank / p.maximumBank) + turbulence * 0.5 * gust[2]) * dt
             val air = Vec3(v.x - w.x, v.y, v.z - w.z)
@@ -410,13 +422,18 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         val newGlideAngle = atan2(vaNew.y, hypot(vaNew.x, vaNew.z))
         glideAngleRate += ((newGlideAngle - glideAngle) / dt - glideAngleRate) * (1 - exp(-dt / 0.12))
         glideAngle = newGlideAngle
-        val newHeading = Compass.heading(vaNew.x, vaNew.z)
-        var change = newHeading - heading
-        if (change > PI) change -= 2 * PI
-        if (change < -PI) change += 2 * PI
-        turnRate += (change / dt - turnRate) * (1 - exp(-dt / 0.3))
-        heading = newHeading
-        val pitchTarget = (-12 + 26 * ds + 10 * stall) * DEG + 0.5 * (glideAngle - p.trimGlideAngle) + turbulence * 0.3 * gust[3]
+        if (hypot(vaNew.x, vaNew.z) > 0.5) {
+            val newHeading = Compass.heading(vaNew.x, vaNew.z)
+            var change = newHeading - heading
+            if (change > PI) change -= 2 * PI
+            if (change < -PI) change += 2 * PI
+            turnRate += (change / dt - turnRate) * (1 - exp(-dt / 0.3))
+            heading = newHeading
+        } else {
+            // No forward speed through the air: the heading stays where it was.
+            turnRate *= exp(-dt / 0.3)
+        }
+        val pitchTarget = (-12 + 26 * ds + 10 * stall + 15 * wakeCollapse) * DEG + 0.5 * (glideAngle - p.trimGlideAngle) + turbulence * 0.3 * gust[3]
         pitch += (pitchTarget - pitch) * (1 - exp(-dt / 0.5))
         velocity = v
 
@@ -436,6 +453,19 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
     val canopyCentre: Vec3 get() = canopyCentre(position, heading, pitch, bank)
 
     companion object {
+        /** Turbulence × slowness × brakes above this empties the cells. */
+        const val DEFLATION_THRESHOLD = 0.5
+        /** How fast the cells empty past the threshold, per second. */
+        const val DEFLATION_RATE = 1.2
+        /** Extra deflation when the ram pressure is gone. */
+        const val SLOW_DEFLATION = 1.2
+        /** Extra deflation at full brakes. */
+        const val BRAKE_DEFLATION = 0.6
+        /** How fast the ram pressure refills the cells, per second. */
+        const val REINFLATION_RATE = 0.7
+        /** How fast empty cells lose their forward airspeed, per second. */
+        const val COLLAPSE_FORWARD_DECAY = 0.8
+
         /** Smooth gusts between −1 and 1, different in each of four channels. */
         fun gust(t: Double, p: DoubleArray): DoubleArray {
             fun channel(a: Double, b: Double, phase: Double) = 0.65 * sin(a * t + phase) + 0.35 * sin(b * t + 2.1 * phase)

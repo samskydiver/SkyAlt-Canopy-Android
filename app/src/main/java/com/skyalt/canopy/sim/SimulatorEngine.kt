@@ -5,6 +5,8 @@ import com.skyalt.canopy.model.Accident
 import com.skyalt.canopy.model.AeroParameters
 import com.skyalt.canopy.model.Airfield
 import com.skyalt.canopy.model.AircraftFlight
+import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftTouchdownSettings
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.METERS_PER_FOOT
 import com.skyalt.canopy.model.People
@@ -57,6 +59,8 @@ sealed class FlightStatus {
     data class Brakes(val percent: Int) : FlightStatus()
     /** Wake turbulence shaking the canopy. */
     data object Turbulence : FlightStatus()
+    /** A wake is letting the pressure out of the cells. */
+    data object Deflating : FlightStatus()
     /** The wake has collapsed part of the canopy. */
     data object WakeCollapse : FlightStatus()
     /** A collision: the run is over. */
@@ -121,6 +125,10 @@ data class UiState(
     val accident: Accident? = null,
     /** The switch for an aircraft landing on the runway. */
     val aircraftLanding: Boolean = false,
+    /** The paint on the aircraft's wings and tail. */
+    val aircraftLivery: AircraftLiverySettings = AircraftLiverySettings(),
+    /** The hidden setting: where every aircraft touches down. */
+    val aircraftTouchdown: AircraftTouchdownSettings = AircraftTouchdownSettings(),
 ) {
     val scenario: Scenario? get() = mode.scenario
 }
@@ -146,6 +154,10 @@ interface SimulatorStore {
     fun saveClouds(c: CloudSettings)
     fun loadTraffic(): TrafficSettings
     fun saveTraffic(t: TrafficSettings)
+    fun loadAircraftLivery(): AircraftLiverySettings
+    fun saveAircraftLivery(l: AircraftLiverySettings)
+    fun loadAircraftTouchdown(): AircraftTouchdownSettings
+    fun saveAircraftTouchdown(t: AircraftTouchdownSettings)
 }
 
 /**
@@ -175,6 +187,9 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     private var clouds = store.loadClouds()
     private var traffic = store.loadTraffic()
     private var accident: Accident? = null
+    private var aircraftLivery = store.loadAircraftLivery()
+    private var aircraftTouchdown = store.loadAircraftTouchdown()
+    private val touchdownMeters get() = aircraftTouchdown.metersFromThreshold
     /** Kept with the traffic settings in free practice, off on entering a scene; the aircraft scene always has one. */
     private var aircraftLanding = traffic.aircraftLanding
     private val scenario get() = mode.scenario
@@ -240,7 +255,9 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         val crowd = people
         val appearances = npcs.appearances
         val autoFirst = firstPersonIsAutomatic
+        val livery = aircraftLivery.colorHex
         sceneCommands += { s ->
+            s.setAircraftLivery(livery)
             s.applyPathStyle(style)
             s.rebuildPattern(config, a, labels)
             s.setCanopySize(config.canopyAreaSquareFeet)
@@ -482,9 +499,9 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             configuration = store.loadConfiguration()
             aircraftLanding = traffic.aircraftLanding
         } else {
-            configuration = chosen.configuration.clamped()
+            configuration = chosen.configuration(touchdownMeters).clamped()
             aircraftLanding = false
-            aircraft = if (chosen.hasAircraft) AircraftFlight.SCENARIO else null
+            aircraft = if (chosen.hasAircraft) AircraftFlight.scenario(touchdownMeters) else null
         }
         aero = AeroParameters(configuration.performance)
         if (chosen == null) aircraft = freeAircraft()
@@ -520,7 +537,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             traffic = traffic.copy(aircraftLanding = on)
             store.saveTraffic(traffic)
         }
-        aircraft = if (mode == SimulatorMode.Free) freeAircraft() else if (on) AircraftFlight.CIRCUIT else null
+        aircraft = if (mode == SimulatorMode.Free) freeAircraft() else if (on) AircraftFlight.circuit(touchdownMeters) else null
         val visible = aircraft != null
         sceneCommands += { it.setAircraft(visible) }
     }
@@ -532,7 +549,38 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     private fun freeAircraft(): AircraftFlight? {
         if (mode != SimulatorMode.Free || !aircraftLanding) return null
         val runway = dropzone.runwayGeometry ?: return null
-        return AircraftFlight.landing(runway, configuration.patternGeometry(aero).finalHeading)
+        return AircraftFlight.landing(runway, configuration.patternGeometry(aero).finalHeading, touchdownMeters)
+    }
+
+    /** The paint on the aircraft's wings and tail, in the simulator and on the scene page's picture. */
+    fun setAircraftLiveryColor(hex: Int) = mutate {
+        val updated = AircraftLiverySettings(hex and 0xffffff)
+        if (updated == aircraftLivery) return@mutate
+        aircraftLivery = updated
+        store.saveAircraftLivery(updated)
+        sceneCommands += { it.setAircraftLivery(updated.colorHex) }
+    }
+
+    /**
+     * The hidden setting: every aircraft touches down [meters] past the
+     * threshold it crosses. The aircraft of the moment is built again and
+     * the run starts over.
+     */
+    fun setAircraftTouchdown(meters: Double) = mutate {
+        val updated = AircraftTouchdownSettings(meters).clamped()
+        if (updated == aircraftTouchdown) return@mutate
+        aircraftTouchdown = updated
+        store.saveAircraftTouchdown(updated)
+        val chosen = scenario
+        aircraft = when {
+            chosen == null -> freeAircraft()
+            chosen.hasAircraft -> AircraftFlight.scenario(touchdownMeters)
+            aircraftLanding -> AircraftFlight.circuit(touchdownMeters)
+            else -> null
+        }
+        val visible = aircraft != null
+        sceneCommands += { it.setAircraft(visible) }
+        resetLocked(keepPaused = true)
     }
 
     /** Free practice's aircraft follows the runway and the landing direction; without a runway the switch goes off. */
@@ -599,7 +647,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             sceneCommands += { it.archiveTrail() }
         }
         // A scene's start follows the wind of the moment, and free practice's aircraft the landing direction.
-        scenario?.let { configuration = configuration.placedStart(it).clamped() }
+        scenario?.let { configuration = configuration.placedStart(it, touchdownMeters).clamped() }
         refreshFreeAircraft()
         state = FlightState(configuration, aero)
         accident = null
@@ -826,6 +874,8 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
                 traffic = traffic,
                 accident = accident,
                 aircraftLanding = aircraftLanding,
+                aircraftLivery = aircraftLivery,
+                aircraftTouchdown = aircraftTouchdown,
             ),
         )
     }
@@ -842,8 +892,9 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             frame.accident -> FlightStatus.Collision
             frame.landed -> FlightStatus.Landed
             frame.wakeCollapse > 0.3 -> FlightStatus.WakeCollapse
-            frame.collapse > 0.02 -> FlightStatus.FullStall
+            frame.collapse > maxOf(0.02, frame.wakeCollapse + 0.01) -> FlightStatus.FullStall
             frame.stall > 0.02 -> FlightStatus.StallOnset
+            frame.wakeCollapse > 0.08 -> FlightStatus.Deflating
             frame.turbulence > 0.25 -> FlightStatus.Turbulence
             brake > 0.7 -> FlightStatus.DeepBrakes
             abs(frame.leftBrake - frame.rightBrake) > 0.3 ->

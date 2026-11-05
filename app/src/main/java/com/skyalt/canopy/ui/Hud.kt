@@ -162,6 +162,7 @@ fun statusLabel(status: FlightStatus, s: Strings): String = when (status) {
     FlightStatus.RightTurn -> s("Right turn")
     is FlightStatus.Brakes -> s.format("Brakes %d%%", status.percent)
     FlightStatus.Turbulence -> s("Turbulence")
+    FlightStatus.Deflating -> s("Cells losing pressure")
     FlightStatus.WakeCollapse -> s("Wake collapse")
     FlightStatus.Collision -> s("Collision")
 }
@@ -174,6 +175,7 @@ private fun StatusBadge(status: FlightStatus) {
         FlightStatus.FullStall -> hex(0xc0281e) to Color.White
         FlightStatus.DeepBrakes -> hex(0xe3a21a) to hex(0x1b1100)
         FlightStatus.Turbulence -> hex(0x5c6bc0) to Color.White
+        FlightStatus.Deflating -> hex(0x7b3fa0) to Color.White
         FlightStatus.WakeCollapse -> hex(0x8e1b6b) to Color.White
         FlightStatus.Collision -> hex(0x111111) to Color.White
         FlightStatus.Landed, FlightStatus.Replay -> Palette.ink to Color.White

@@ -33,14 +33,14 @@ class ScenarioTest {
     @Test
     fun everySceneFliesTheStudentCanopy() {
         for (scenario in Scenario.entries) {
-            val c = scenario.configuration
+            val c = scenario.configuration()
             assertEquals(CanopyType.STUDENT, c.canopyType)
             assertEquals(220.0, c.canopyAreaSquareFeet, 1e-9)
             assertEquals(0.8, c.performance.wingLoading, 0.01)
             assertEquals(ReferencePattern.LEFT, c.referencePattern)
         }
-        assertEquals(0.0, Scenario.AIRCRAFT.configuration.windSpeed, 1e-9)
-        assertTrue(Scenario.OBSTACLES.configuration.startsAtFinalTurn)
+        assertEquals(0.0, Scenario.AIRCRAFT.configuration().windSpeed, 1e-9)
+        assertTrue(Scenario.OBSTACLES.configuration().startsAtFinalTurn)
     }
 
     @Test
@@ -56,7 +56,7 @@ class ScenarioTest {
 
     @Test
     fun sceneAircraftIsFlyingAtTheStart() {
-        val state = AircraftFlight.SCENARIO.state(0.0)
+        val state = AircraftFlight.scenario().state(0.0)
         assertTrue(state.isPresent)
         assertFalse(state.onGround)
         assertTrue(state.position.y > 10)
@@ -65,7 +65,7 @@ class ScenarioTest {
 
     @Test
     fun trafficIsGeneratedAroundTheSpawn() {
-        val configuration = Scenario.TRAFFIC.configuration
+        val configuration = Scenario.TRAFFIC.configuration()
         val wind = Compass.wind(configuration.windSpeed, configuration.windDirectionDegrees)
         val spawn = TrafficSpawn(Vec3(0.0, 0.0, 0.0), 0.0..300.0, 600.0..1200.0)
         val traffic = TrafficSimulation.generate(TrafficSettings.MAXIMUM_COUNT, configuration, wind, spawn)
@@ -96,5 +96,14 @@ class ScenarioTest {
         assertTrue(clouds.contains(550.0))
         assertFalse(clouds.contains(450.0))
         assertFalse(clouds.copy(density = 0.0).contains(550.0))
+    }
+
+    @Test
+    fun aircraftTouchesDownPastTheThreshold() {
+        assertEquals(Airfield.RUNWAY_WEST_X + 100, AircraftFlight.scenario().touchdown.x, 1e-9)
+        assertEquals(Airfield.RUNWAY_WEST_X + 400, AircraftFlight.scenario(400.0).touchdown.x, 1e-9)
+        val near = Scenario.AIRCRAFT.configuration(100.0)
+        val far = Scenario.AIRCRAFT.configuration(400.0)
+        assertEquals(300.0, far.startEastMeters!! - near.startEastMeters!!, 1e-6)
     }
 }
