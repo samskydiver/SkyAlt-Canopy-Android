@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.hypot
+import kotlin.math.sin
 
 class FlightModelTest {
     private fun fly(configuration: SimulatorConfiguration, seconds: Double, left: Double, right: Double): FlightState {
@@ -112,5 +113,28 @@ class FlightModelTest {
         }
         assertTrue("weak wake at trim keeps the cells: ${trim.inflation}", trim.inflation > 0.9)
         assertTrue("braking in it deflates them: ${braked.inflation}", braked.inflation < trim.inflation - 0.2)
+    }
+
+    @Test
+    fun frontRisersDiveAndTurnWithoutToggles() {
+        val performance = CanopyPerformance(96 * 2.2 / CanopyPerformance.POUNDS_PER_KILOGRAM, 96.0, CanopyType.CROSS_BRACED)
+        val aero = AeroParameters(performance)
+        val still = Vec3(0.0, 0.0, 0.0)
+        val dt = 1.0 / 120
+        val both = FlightState(Vec3(0.0, 500.0, 0.0), 0.0, aero, still)
+        repeat(360) { both.step(dt, 0.0, 0.0, aero, still, false, leftRiser = 1.0, rightRiser = 1.0) }
+        assertTrue("nose down on both fronts: ${both.dive}", both.dive > 0.9)
+        val forward = hypot(both.velocity.x, both.velocity.z)
+        assertTrue("faster than trim: $forward vs ${aero.trimForwardSpeed}", forward > 1.2 * aero.trimForwardSpeed)
+        assertTrue("steeper than trim: ${both.pitch / DEG}°", both.pitch < -22 * DEG)
+        assertTrue("no roll on both: ${both.bank}", kotlin.math.abs(both.bank) < 1e-6)
+        val one = FlightState(Vec3(0.0, 500.0, 0.0), 0.0, aero, still)
+        repeat(360) { one.step(dt, 0.0, 0.0, aero, still, false, leftRiser = 1.0) }
+        assertTrue("left front banks left: ${one.bank / DEG}°", one.bank < -30 * DEG)
+        assertTrue("and turns left: ${one.heading / DEG}°", sin(one.heading) < -0.5)
+        val trim = FlightState(Vec3(0.0, 500.0, 0.0), 0.0, aero, still)
+        repeat(360) { trim.step(dt, 0.0, 0.0, aero, still, false) }
+        assertEquals(0.0, trim.dive, 1e-9)
+        assertEquals(0.0, trim.bank, 1e-9)
     }
 }
