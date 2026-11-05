@@ -101,6 +101,26 @@ class SimulatorActivity : ComponentActivity() {
         }
     }
 
+    private val pickLogo = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        background.execute {
+            val bitmap = try {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(contentResolver, uri)) { decoder, _, _ ->
+                        decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    MediaStore.Images.Media.getBitmap(contentResolver, uri)
+                }
+            } catch (e: Exception) {
+                null
+            }
+            // Encoded under a megabyte here, off the main thread.
+            if (bitmap != null) engine.setAircraftLogo(bitmap.copy(Bitmap.Config.ARGB_8888, false))
+        }
+    }
+
     private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) capture.start(this) else capture.markRefused()
     }
@@ -136,6 +156,7 @@ class SimulatorActivity : ComponentActivity() {
             trialEnforced = BuildConfig.TRIAL_ENFORCED,
             language = language,
             onChoosePicture = { pickPicture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onChooseLogo = { pickLogo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             onToggleCamera = ::toggleCamera,
             onOpenAppSettings = {
                 startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))

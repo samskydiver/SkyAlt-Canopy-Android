@@ -6,6 +6,7 @@ import com.skyalt.canopy.model.AeroParameters
 import com.skyalt.canopy.model.Airfield
 import com.skyalt.canopy.model.AircraftFlight
 import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AircraftTouchdownSettings
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.METERS_PER_FOOT
@@ -129,6 +130,10 @@ data class UiState(
     val aircraftLivery: AircraftLiverySettings = AircraftLiverySettings(),
     /** The hidden setting: where every aircraft touches down. */
     val aircraftTouchdown: AircraftTouchdownSettings = AircraftTouchdownSettings(),
+    /** The registration on the aircraft and where its logo sits. */
+    val aircraftMarkings: AircraftMarkingsSettings = AircraftMarkingsSettings(),
+    /** The logo on the aircraft's sides, once one has been picked. */
+    val aircraftLogo: Bitmap? = null,
 ) {
     val scenario: Scenario? get() = mode.scenario
 }
@@ -158,6 +163,13 @@ interface SimulatorStore {
     fun saveAircraftLivery(l: AircraftLiverySettings)
     fun loadAircraftTouchdown(): AircraftTouchdownSettings
     fun saveAircraftTouchdown(t: AircraftTouchdownSettings)
+    fun loadAircraftMarkings(): AircraftMarkingsSettings
+    fun saveAircraftMarkings(m: AircraftMarkingsSettings)
+    /** The logo on the P750's sides, if one has been picked. */
+    fun loadAircraftLogo(): Bitmap?
+    /** Keeps [b] as the logo under a megabyte and returns it as kept, or null when it could not be. */
+    fun saveAircraftLogo(b: Bitmap): Bitmap?
+    fun removeAircraftLogo()
 }
 
 /**
@@ -189,6 +201,8 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
     private var accident: Accident? = null
     private var aircraftLivery = store.loadAircraftLivery()
     private var aircraftTouchdown = store.loadAircraftTouchdown()
+    private var aircraftMarkings = store.loadAircraftMarkings()
+    private var aircraftLogo: Bitmap? = store.loadAircraftLogo()
     private val touchdownMeters get() = aircraftTouchdown.metersFromThreshold
     /** Kept with the traffic settings in free practice, off on entering a scene; the aircraft scene always has one. */
     private var aircraftLanding = traffic.aircraftLanding
@@ -256,8 +270,11 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         val appearances = npcs.appearances
         val autoFirst = firstPersonIsAutomatic
         val livery = aircraftLivery.colorHex
+        val markings = aircraftMarkings
+        val logo = aircraftLogo
         sceneCommands += { s ->
             s.setAircraftLivery(livery)
+            s.setAircraftMarkings(markings, logo)
             s.applyPathStyle(style)
             s.rebuildPattern(config, a, labels)
             s.setCanopySize(config.canopyAreaSquareFeet)
@@ -559,6 +576,37 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         aircraftLivery = updated
         store.saveAircraftLivery(updated)
         sceneCommands += { it.setAircraftLivery(updated.colorHex) }
+    }
+
+    /**
+     * Changes the registration or where the logo sits, keeps the result,
+     * and redraws the aircraft in the simulator; the scene page's picture
+     * follows the published state.
+     */
+    fun updateAircraftMarkings(change: (AircraftMarkingsSettings) -> AircraftMarkingsSettings) = mutate {
+        val updated = change(aircraftMarkings).clamped()
+        if (updated == aircraftMarkings) return@mutate
+        aircraftMarkings = updated
+        store.saveAircraftMarkings(updated)
+        val logo = aircraftLogo
+        sceneCommands += { it.setAircraftMarkings(updated, logo) }
+    }
+
+    /** Keeps a picked picture as the logo on the aircraft's sides, under a megabyte, and puts it on. Off the main thread: it encodes. */
+    fun setAircraftLogo(image: Bitmap) {
+        val saved = store.saveAircraftLogo(image) ?: return
+        mutate {
+            aircraftLogo = saved
+            val markings = aircraftMarkings
+            sceneCommands += { it.setAircraftMarkings(markings, saved) }
+        }
+    }
+
+    fun removeAircraftLogo() = mutate {
+        store.removeAircraftLogo()
+        aircraftLogo = null
+        val markings = aircraftMarkings
+        sceneCommands += { it.setAircraftMarkings(markings, null) }
     }
 
     /**
@@ -876,6 +924,8 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
                 aircraftLanding = aircraftLanding,
                 aircraftLivery = aircraftLivery,
                 aircraftTouchdown = aircraftTouchdown,
+                aircraftMarkings = aircraftMarkings,
+                aircraftLogo = aircraftLogo,
             ),
         )
     }

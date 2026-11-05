@@ -153,4 +153,16 @@ class ScenarioTest {
         repeat(600) { traffic.step(1.0 / 60, wind) }
         assertEquals(3, traffic.frames.size)
     }
+
+    @Test
+    fun aircraftMarkingsAreNormalisedAndClamped() {
+        assertEquals("ZK-SKY", AircraftMarkingsSettings.normalizedRegistration("  zk-sky \n"))
+        assertEquals("ABCDEFGH", AircraftMarkingsSettings.normalizedRegistration("abcdefghij"))
+        assertEquals("A B", AircraftMarkingsSettings.normalizedRegistration("a\nb"))
+        assertEquals(AircraftMarkingsSettings.DEFAULT_REGISTRATION, AircraftMarkingsSettings.normalizedRegistration("   "))
+        val wild = AircraftMarkingsSettings("", AircraftLogoPlacement(along = 9.0, height = -3.0, width = 0.1)).clamped()
+        assertEquals(AircraftMarkingsSettings.DEFAULT_REGISTRATION, wild.registration)
+        assertEquals(AircraftLogoPlacement(AircraftLogoPlacement.ALONG_MAX, AircraftLogoPlacement.HEIGHT_MIN, AircraftLogoPlacement.WIDTH_MIN), wild.logo)
+        assertEquals(AircraftMarkingsSettings(), AircraftMarkingsSettings().clamped())
+    }
 }

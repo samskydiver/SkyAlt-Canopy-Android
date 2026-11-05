@@ -56,6 +56,60 @@ data class AircraftLiverySettings(
     }
 }
 
+/**
+ * Where the logo sits on the P750's sides: its centre, metres along the
+ * fuselage from the wing's datum (+ towards the tail) and up from the
+ * centre line, and its width along the fuselage.
+ */
+data class AircraftLogoPlacement(
+    val along: Double = -2.7,
+    val height: Double = -0.3,
+    val width: Double = 0.8,
+) {
+    fun clamped() = AircraftLogoPlacement(
+        along.clamp(ALONG_MIN, ALONG_MAX),
+        height.clamp(HEIGHT_MIN, HEIGHT_MAX),
+        width.clamp(WIDTH_MIN, WIDTH_MAX),
+    )
+
+    companion object {
+        const val ALONG_MIN = -5.2
+        const val ALONG_MAX = 5.2
+        const val HEIGHT_MIN = -0.85
+        const val HEIGHT_MAX = 0.85
+        const val WIDTH_MIN = 0.3
+        const val WIDTH_MAX = 3.0
+    }
+}
+
+/**
+ * The P750's markings: the registration painted on its tail and wings, and
+ * where the logo sits on its sides. Set on the page behind four quick taps
+ * on the scene page's picture.
+ */
+data class AircraftMarkingsSettings(
+    val registration: String = DEFAULT_REGISTRATION,
+    val logo: AircraftLogoPlacement = AircraftLogoPlacement(),
+) {
+    fun clamped() = AircraftMarkingsSettings(normalizedRegistration(registration), logo.clamped())
+
+    companion object {
+        const val DEFAULT_REGISTRATION = "SZ-520"
+        const val REGISTRATION_LENGTH = 8
+
+        /**
+         * A registration as it is painted: on one line, in capitals,
+         * trimmed, at most [REGISTRATION_LENGTH] characters, and the
+         * default when nothing is left.
+         */
+        fun normalizedRegistration(text: String): String {
+            val line = text.lines().joinToString(" ").uppercase().trim()
+            val kept = line.take(REGISTRATION_LENGTH).trim()
+            return kept.ifEmpty { DEFAULT_REGISTRATION }
+        }
+    }
+}
+
 /** The hidden setting: how far past the threshold every aircraft touches down. */
 data class AircraftTouchdownSettings(
     val metersFromThreshold: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD,

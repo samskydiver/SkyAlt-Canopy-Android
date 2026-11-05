@@ -7,7 +7,10 @@ import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.graphics.Bitmap
 import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftLogoPlacement
+import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.sim.MultisampleConfigChooser
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
@@ -22,8 +25,8 @@ import kotlin.math.sqrt
  * The scene page's picture: the AFF exit, the student and two instructors
  * just out of the P750's door on jump run, its propeller turning. One
  * finger turns the view round them, two fingers move it and a pinch zooms,
- * as SceneKit's camera control on iOS. Seven quick taps open the hidden
- * settings. Port of CanopyExitScene.swift.
+ * as SceneKit's camera control on iOS. Four quick taps open the aircraft's
+ * markings and seven the hidden touchdown setting. Port of CanopyExitScene.swift.
  */
 @SuppressLint("ViewConstructor")
 class ExitSceneView(context: Context) : GLSurfaceView(context) {
@@ -41,8 +44,20 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
 
     /** The colour of the aircraft's wings and tail, 0xRRGGBB; the aircraft is built again when it changes. */
     @Volatile var liveryHex: Int = AircraftLiverySettings.DEFAULT_COLOR_HEX
-    /** Seven quick taps on the picture: the way in to the hidden settings. */
-    var onSecretTaps: () -> Unit = {}
+    /** The registration on its tail and wings, and the logo on its sides with where it sits. */
+    @Volatile var registration: String = AircraftMarkingsSettings.DEFAULT_REGISTRATION
+    @Volatile var logo: Bitmap? = null
+    @Volatile var logoPlacement: AircraftLogoPlacement = AircraftLogoPlacement()
+    /**
+     * Quick taps on the picture, the way in to the hidden settings: called
+     * with 4 once the run of taps has ended there, so four taps on the way
+     * to seven open nothing, and with 7 at the seventh.
+     */
+    var onQuickTaps: (Int) -> Unit = {}
+    private val endOfRun = Runnable {
+        if (taps == 4) onQuickTaps(4)
+        taps = 0
+    }
     private var downX = 0f
     private var downY = 0f
     private var downTime = 0L
@@ -113,15 +128,26 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         return true
     }
 
-    /** Counts quick taps, each within 400 ms of the last; the seventh opens the hidden settings. */
+    /**
+     * Counts quick taps, each within 400 ms of the last: the seventh opens
+     * the touchdown setting; a run that ends at four, the markings.
+     */
     private fun countTap(event: MotionEvent) {
+        removeCallbacks(endOfRun)
         if (moved || event.eventTime - downTime > 300) { taps = 0; return }
         taps = if (event.eventTime - lastTapTime <= 400) taps + 1 else 1
         lastTapTime = event.eventTime
         if (taps >= 7) {
             taps = 0
-            onSecretTaps()
+            onQuickTaps(7)
+        } else {
+            postDelayed(endOfRun, 400)
         }
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(endOfRun)
+        super.onDetachedFromWindow()
     }
 
     /** The middle of the fingers on the screen, leaving out the one at [skip] (lifting). */
@@ -142,6 +168,9 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         private var formation: List<GpuPart> = emptyList()
         private var hub = com.skyalt.canopy.model.V3(0f, 0f, 0f)
         private var builtLivery = 0
+        private var builtRegistration = ""
+        private var builtLogo: Bitmap? = null
+        private var builtPlacement = AircraftLogoPlacement()
         private var width = 1
         private var height = 1
         private var start = 0L
@@ -161,7 +190,10 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
 
         private fun buildAircraft() {
             builtLivery = liveryHex
-            val aircraft = Models.aircraft(builtLivery)
+            builtRegistration = registration
+            builtLogo = logo
+            builtPlacement = logoPlacement
+            val aircraft = Models.aircraft(builtLivery, builtRegistration, builtLogo, builtPlacement)
             body = GpuPart.of(aircraft.body)
             propeller = GpuPart.of(aircraft.propeller)
             hub = aircraft.hub
@@ -172,7 +204,7 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         }
 
         override fun onDrawFrame(gl: GL10?) {
-            if (builtLivery != liveryHex) {
+            if (builtLivery != liveryHex || builtRegistration != registration || builtLogo !== logo || builtPlacement != logoPlacement) {
                 body.forEach { it.release() }
                 propeller.forEach { it.release() }
                 buildAircraft()

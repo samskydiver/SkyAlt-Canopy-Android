@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.skyalt.canopy.model.AircraftLiverySettings
+import com.skyalt.canopy.model.AircraftLogoPlacement
+import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AircraftTouchdownSettings
 import com.skyalt.canopy.model.CanopyType
 import com.skyalt.canopy.model.CloudSettings
@@ -26,6 +28,7 @@ import kotlin.math.roundToInt
 class PreferencesStore(context: Context) : SimulatorStore {
     private val prefs = context.getSharedPreferences("canopy-simulator", Context.MODE_PRIVATE)
     private val imageFile = File(context.filesDir, "CanopySimulator/dropzone.jpg")
+    private val logoFile = File(context.filesDir, "CanopySimulator/aircraft-logo")
 
     override fun loadConfiguration(): SimulatorConfiguration {
         val d = SimulatorConfiguration()
@@ -199,6 +202,47 @@ class PreferencesStore(context: Context) : SimulatorStore {
     override fun saveAircraftTouchdown(t: AircraftTouchdownSettings) =
         prefs.edit().putFloat("aircraft-touchdown", t.metersFromThreshold.toFloat()).apply()
 
+    override fun loadAircraftMarkings(): AircraftMarkingsSettings {
+        val d = AircraftMarkingsSettings()
+        val j = json("aircraft-markings") ?: return d
+        val logo = j.optJSONObject("logo")
+        return AircraftMarkingsSettings(
+            j.optString("registration", d.registration),
+            AircraftLogoPlacement(
+                logo?.optDouble("along", d.logo.along) ?: d.logo.along,
+                logo?.optDouble("height", d.logo.height) ?: d.logo.height,
+                logo?.optDouble("width", d.logo.width) ?: d.logo.width,
+            ),
+        ).clamped()
+    }
+
+    override fun saveAircraftMarkings(m: AircraftMarkingsSettings) {
+        val j = JSONObject()
+            .put("registration", m.registration)
+            .put("logo", JSONObject().put("along", m.logo.along).put("height", m.logo.height).put("width", m.logo.width))
+        prefs.edit().putString("aircraft-markings", j.toString()).apply()
+    }
+
+    override fun loadAircraftLogo(): Bitmap? =
+        if (logoFile.exists()) BitmapFactory.decodeFile(logoFile.path) else null
+
+    override fun saveAircraftLogo(b: Bitmap): Bitmap? = try {
+        val data = AircraftLogoCompression.compressed(b)
+        if (data == null) null else {
+            logoFile.parentFile?.mkdirs()
+            val temporary = File(logoFile.path + ".tmp")
+            temporary.writeBytes(data)
+            if (!temporary.renameTo(logoFile)) { logoFile.delete(); temporary.renameTo(logoFile) }
+            BitmapFactory.decodeByteArray(data, 0, data.size)
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    override fun removeAircraftLogo() {
+        logoFile.delete()
+    }
+
     override fun loadAutoFirstPerson() = prefs.getBoolean("auto-first-person", true)
     override fun saveAutoFirstPerson(on: Boolean) = prefs.edit().putBoolean("auto-first-person", on).apply()
 
@@ -213,5 +257,57 @@ class PreferencesStore(context: Context) : SimulatorStore {
 
     companion object {
         const val MAXIMUM_PIXEL_SIZE = 2048.0
+    }
+}
+
+/**
+ * The picture on the P750's sides, encoded under a megabyte: with a clear
+ * background it stays a PNG, drawn smaller until it fits; otherwise it is a
+ * JPEG, its quality and then its size brought down until it fits.
+ */
+object AircraftLogoCompression {
+    const val MAXIMUM_PIXEL_SIZE = 1_024
+    const val MAXIMUM_BYTES = 1_000_000
+
+    fun compressed(image: Bitmap): ByteArray? {
+        var longest = min(MAXIMUM_PIXEL_SIZE, max(image.width, image.height))
+        if (longest <= 0) return null
+        var opaque: Boolean? = null
+        repeat(8) {
+            val factor = min(1.0, longest / max(1, max(image.width, image.height)).toDouble())
+            val drawn = if (factor < 1) {
+                Bitmap.createScaledBitmap(image, max(1, (image.width * factor).roundToInt()), max(1, (image.height * factor).roundToInt()), true)
+            } else image
+            val isOpaque = opaque ?: isOpaque(drawn).also { opaque = it }
+            if (isOpaque) {
+                for (quality in listOf(85, 70, 55)) {
+                    val data = encode(drawn, Bitmap.CompressFormat.JPEG, quality)
+                    if (data.size <= MAXIMUM_BYTES) return data
+                }
+            } else {
+                val data = encode(drawn, Bitmap.CompressFormat.PNG, 100)
+                if (data.size <= MAXIMUM_BYTES) return data
+            }
+            longest = (longest * 0.75).toInt()
+            if (longest < 64) return null
+        }
+        return null
+    }
+
+    private fun encode(b: Bitmap, format: Bitmap.CompressFormat, quality: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        b.compress(format, quality, out)
+        return out.toByteArray()
+    }
+
+    /** Whether the picture has no clear parts to keep. */
+    private fun isOpaque(b: Bitmap): Boolean {
+        if (!b.hasAlpha()) return true
+        val row = IntArray(b.width)
+        for (y in 0 until b.height) {
+            b.getPixels(row, 0, b.width, 0, y, b.width, 1)
+            for (pixel in row) if ((pixel ushr 24) < 0xff) return false
+        }
+        return true
     }
 }
