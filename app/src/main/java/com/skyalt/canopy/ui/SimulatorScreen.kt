@@ -101,6 +101,7 @@ fun SimulatorScreen(
     val engine = host.engine
     val capture = host.capture
     var choosingStart by remember { mutableStateOf(false) }
+    var choosingCanopy by remember { mutableStateOf(false) }
     var showingPro by remember { mutableStateOf(false) }
     var barHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
@@ -148,7 +149,7 @@ fun SimulatorScreen(
     }
 
     // Back: out of the scene page, else to it on the way out of the simulator.
-    BackHandler(enabled = choosingScenario || (drawer == null && !isCasting && !editingDropzone && !choosingStart && !showingPro)) {
+    BackHandler(enabled = choosingScenario || (drawer == null && !isCasting && !editingDropzone && !choosingStart && !choosingCanopy && !showingPro)) {
         if (choosingScenario) leaveScenarioPicker() else openScenarioPicker(leaving = true)
     }
 
@@ -235,6 +236,7 @@ fun SimulatorScreen(
                                 state, engine,
                                 language = host.language,
                                 onOpenStartPoint = { choosingStart = true },
+                                onOpenCanopyPicker = { choosingCanopy = true },
                                 onChoosePicture = host.onChoosePicture,
                                 onEditPicture = { openDropzoneEditor(forRunway = false) },
                                 onApply = { onDrawer(null) },
@@ -257,6 +259,10 @@ fun SimulatorScreen(
             Box(Modifier.fillMaxSize().imePadding()) {
                 StartPointScreen(state, engine) { choosingStart = false }
             }
+        }
+        // Over the settings drawer, like the start point map; Confirm and the back button land back in the drawer.
+        if (choosingCanopy) {
+            CanopyPicker(state, engine) { choosingCanopy = false }
         }
         if (choosingScenario) {
             ScenarioPicker(state, engine, onChooseLogo = host.onChooseLogo, onChoose = { choose(it) }, onBack = { leaveScenarioPicker() })

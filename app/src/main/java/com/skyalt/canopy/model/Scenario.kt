@@ -60,6 +60,7 @@ enum class Scenario(val number: Int, val titleKey: String, val summaryKey: Strin
     fun configuration(aircraftTouchdown: Double = Airfield.TOUCHDOWN_FROM_THRESHOLD): SimulatorConfiguration {
             var setup = SimulatorConfiguration(
                 canopyType = CanopyType.STUDENT,
+                canopyModelKey = CanopyModel.STUDENT_KEY,
                 canopyAreaSquareFeet = 220.0,
                 exitWeightKilograms = 0.8 * 220 / CanopyPerformance.POUNDS_PER_KILOGRAM,
                 referencePattern = ReferencePattern.LEFT,

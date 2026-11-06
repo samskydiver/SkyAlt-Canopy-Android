@@ -12,6 +12,7 @@ import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AeroParameters
 import com.skyalt.canopy.model.AircraftState
+import com.skyalt.canopy.model.CanopyModel
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.TrafficAppearance
 import com.skyalt.canopy.model.TrafficFrame
@@ -90,6 +91,13 @@ class SceneController {
 
     private val builder = CanopyMeshBuilder()
     private var canopyScale = 1.0
+    /** The chosen series' own model, flown in place of the procedural wing once it has loaded; see [setCanopy]. */
+    private var canopyRig: GpuRig? = null
+    private var canopyRigScale = 1f
+    /** Counts the requests, so a slow load for a canopy no longer chosen is dropped. */
+    private var canopyGeneration = 0
+    @Volatile private var pendingRig: Pair<Int, CanopyModelRig?>? = null
+    private val canopyRigModel = FloatArray(16)
     private var tipAlpha = 1f
     private var jumperAlpha = 1f
 
@@ -258,6 +266,8 @@ class SceneController {
         aircraftBody = null; aircraftPropeller = null
         personParts = null
         trafficVariants.clear(); trafficJumpers = null
+        // The flown model's buffers went with the old context; its shape stays.
+        canopyRig = canopyRig?.let { GpuRig(it.rig) }
         ready = true
     }
 
@@ -272,11 +282,55 @@ class SceneController {
         updateCamera(frame, dt)
     }
 
-    fun setCanopySize(areaSquareFeet: Double) {
+    /**
+     * Flies the series' own model at the size chosen: built off the GL
+     * thread from the bundled file, the procedural wing standing in until
+     * it is ready, and scaled by the square root of the area ratio about
+     * the harness, lines and all. Without a model the procedural wing
+     * flies at the size.
+     */
+    fun setCanopy(model: CanopyModel?, areaSquareFeet: Double) {
         canopyScale = CanopyMeshShape.scale(areaSquareFeet)
+        canopyGeneration += 1
+        val generation = canopyGeneration
+        if (model == null) {
+            installCanopyRig(null)
+            return
+        }
+        canopyRigScale = sqrt(max(1.0, areaSquareFeet) / model.modelSize).toFloat()
+        if (canopyRig?.rig?.key == model.key) return
+        Thread {
+            pendingRig = generation to CanopyModelFiles.rig(model)
+        }.apply { name = "canopy-model"; start() }
+    }
+
+    private fun applyPendingRig() {
+        val pending = pendingRig ?: return
+        pendingRig = null
+        if (pending.first == canopyGeneration) installCanopyRig(pending.second)
+    }
+
+    /** Hangs the model from the jumper's shoulders and hides the procedural wing, or brings the wing back. */
+    private fun installCanopyRig(rig: CanopyModelRig?) {
+        canopyRig?.release()
+        canopyRig = rig?.let { GpuRig(it) }
     }
 
     private fun updateCanopy(dL: Double, dR: Double, stall: Double, collapse: Double) {
+        applyPendingRig()
+        canopyRig?.let { gpu ->
+            val rig = gpu.rig
+            rig.update(dL.toFloat(), dR.toFloat(), stall.toFloat(), collapse.toFloat())
+            val s = canopyRigScale
+            val h = CanopyModelRig.HARNESS_HEIGHT
+            val l = rig.togglePosition(true, dL.toFloat())
+            val r = rig.togglePosition(false, dR.toFloat())
+            placeArms(
+                floatArrayOf(l[0] * s, h + l[1] * s, l[2] * s),
+                floatArrayOf(r[0] * s, h + r[1] * s, r[2] * s),
+            )
+            return
+        }
         builder.update(dL, dR, stall, collapse, canopyScale)
         topMesh.set(builder.topVertices, normals = builder.topNormals, colors = builder.topColors, indices = builder.skinIndices)
         bottomMesh.set(builder.bottomVertices, normals = builder.bottomNormals, colors = builder.bottomColors, indices = builder.skinIndices)
@@ -288,11 +342,16 @@ class SceneController {
         brakeMesh.set(builder.brakeSegments.data, builder.brakeSegments.size)
         riserMesh.set(builder.riserSegments.data, builder.riserSegments.size)
 
-        // Arms reach for the toggles: straight up with the toggles up,
-        // bending at the elbow as they come down.
+        // The hands follow the brake lines.
         val lp = CanopyMeshShape.LINE_LENGTH.toFloat()
-        val lh = floatArrayOf(builder.leftHand[0], builder.leftHand[1] + lp, builder.leftHand[2])
-        val rh = floatArrayOf(builder.rightHand[0], builder.rightHand[1] + lp, builder.rightHand[2])
+        placeArms(
+            floatArrayOf(builder.leftHand[0], builder.leftHand[1] + lp, builder.leftHand[2]),
+            floatArrayOf(builder.rightHand[0], builder.rightHand[1] + lp, builder.rightHand[2]),
+        )
+    }
+
+    /** Arms reach for the hands (in the jumper's frame): straight up with the toggles up, bending at the elbow as they come down. */
+    private fun placeArms(lh: FloatArray, rh: FloatArray) {
         val le = elbow(SHOULDER_LEFT, lh, floatArrayOf(-0.3f, -1f, 0.2f))
         val re = elbow(SHOULDER_RIGHT, rh, floatArrayOf(0.3f, -1f, 0.2f))
         place(armModels[0], SHOULDER_LEFT, le)
@@ -712,20 +771,8 @@ class SceneController {
         if (showsPaths) for (i in ghostTrailPoints.indices) draw(ghostMeshes[i], identity, color(pathStyle.history, 1.0), lit = false)
 
         // The rig
-        draw(topMesh, rigModel, WHITE, lit = true, vertexColor = true)
-        draw(bottomMesh, rigModel, WHITE, lit = true, vertexColor = true)
-        draw(inletMesh, rigModel, CanopyMeshBuilder.rgb(0x2a1a12), lit = true)
-        if (tipAlpha > 0.01f) {
-            for (i in 0..1) {
-                val c = CanopyMeshBuilder.CELL_COLORS[if (i == 0) 0 else CanopyMeshShape.CELLS - 1].copyOf()
-                c[3] = tipAlpha
-                draw(tipMeshes[i], rigModel, c, lit = true)
-            }
-        }
-        draw(ribMesh, rigModel, floatArrayOf(0.102f, 0.122f, 0.149f, 0.35f), lit = false)
-        draw(lineMesh, rigModel, floatArrayOf(0.957f, 0.957f, 0.941f, 0.8f), lit = false)
-        draw(brakeMesh, rigModel, CanopyMeshBuilder.rgb(0xffd23f), lit = false)
-        draw(riserMesh, rigModel, CanopyMeshBuilder.rgb(0x1a1f26), lit = false)
+        val flown = canopyRig
+        if (flown != null) drawCanopyRig(flown) else drawProceduralCanopy()
         draw(dropLineMesh, identity, floatArrayOf(0.055f, 0.102f, 0.157f, 0.35f), lit = false)
         if (jumperAlpha > 0.01f) drawJumper()
         drawTraffic()
@@ -746,6 +793,40 @@ class SceneController {
             }
             GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         }
+    }
+
+    /** The series' model under the jumper at the harness, scaled to the size flown; the toggles slide down the brake lines. */
+    private fun drawCanopyRig(gpu: GpuRig) {
+        gpu.sync()
+        val s = canopyRigScale
+        jumperModel.copyInto(canopyRigModel)
+        Matrix.translateM(canopyRigModel, 0, 0f, CanopyModelRig.HARNESS_HEIGHT, 0f)
+        Matrix.scaleM(canopyRigModel, 0, s, s, s)
+        gpu.forEachPart { mesh, part ->
+            val model = if (part.offsetY != 0f) {
+                canopyRigModel.copyInto(scratch2)
+                Matrix.translateM(scratch2, 0, 0f, part.offsetY, 0f)
+                scratch2
+            } else canopyRigModel
+            draw(mesh, model, WHITE, lit = true, vertexColor = true)
+        }
+    }
+
+    private fun drawProceduralCanopy() {
+        draw(topMesh, rigModel, WHITE, lit = true, vertexColor = true)
+        draw(bottomMesh, rigModel, WHITE, lit = true, vertexColor = true)
+        draw(inletMesh, rigModel, CanopyMeshBuilder.rgb(0x2a1a12), lit = true)
+        if (tipAlpha > 0.01f) {
+            for (i in 0..1) {
+                val c = CanopyMeshBuilder.CELL_COLORS[if (i == 0) 0 else CanopyMeshShape.CELLS - 1].copyOf()
+                c[3] = tipAlpha
+                draw(tipMeshes[i], rigModel, c, lit = true)
+            }
+        }
+        draw(ribMesh, rigModel, floatArrayOf(0.102f, 0.122f, 0.149f, 0.35f), lit = false)
+        draw(lineMesh, rigModel, floatArrayOf(0.957f, 0.957f, 0.941f, 0.8f), lit = false)
+        draw(brakeMesh, rigModel, CanopyMeshBuilder.rgb(0xffd23f), lit = false)
+        draw(riserMesh, rigModel, CanopyMeshBuilder.rgb(0x1a1f26), lit = false)
     }
 
     // MARK: - Clouds

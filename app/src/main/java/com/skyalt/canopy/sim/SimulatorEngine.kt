@@ -277,7 +277,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
             s.setAircraftMarkings(markings, logo)
             s.applyPathStyle(style)
             s.rebuildPattern(config, a, labels)
-            s.setCanopySize(config.canopyAreaSquareFeet)
+            s.setCanopy(config.canopyModel, config.canopyAreaSquareFeet)
             s.isFirstPersonAutomatic = autoFirst && auto
             s.firstPersonAltitude = fp
             s.setDropzone(image, dz)
@@ -524,12 +524,13 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         if (chosen == null) aircraft = freeAircraft()
         fullToggleTurnSeconds = FlightState.fullToggleTurnSeconds(configuration, aero)
         val area = configuration.canopyAreaSquareFeet
+        val canopyModel = configuration.canopyModel
         val airfield = chosen != null
         val hasAircraft = aircraft != null
         val paths = chosen?.showsPaths ?: true
         val autoFirst = firstPersonIsAutomatic
         sceneCommands += {
-            it.setCanopySize(area)
+            it.setCanopy(canopyModel, area)
             it.setAirfield(airfield)
             it.setAircraft(hasAircraft)
             it.showsPaths = paths
@@ -785,7 +786,7 @@ class SimulatorEngine(private val store: SimulatorStore, private val publish: (U
         if (live || windsockMoved) {
             val a = aero
             val labels = legLabels
-            sceneCommands += { it.rebuildPattern(updated, a, labels); it.setCanopySize(updated.canopyAreaSquareFeet) }
+            sceneCommands += { it.rebuildPattern(updated, a, labels); it.setCanopy(updated.canopyModel, updated.canopyAreaSquareFeet) }
         }
     }
 
