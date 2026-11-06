@@ -44,4 +44,24 @@ class CanopyModelCatalogTest {
     fun scenesFlyTheStudentSeries() {
         for (s in Scenario.entries) assertEquals("navigator", s.configuration().canopyModelKey)
     }
+
+    @Test
+    fun namesAreMaskedEverywhere() {
+        assertEquals("S*br*3", CanopyModel.forKey("sabre3")!!.name)
+        for (m in CanopyModel.ALL) assertEquals(m.key, 2, m.name.count { it == '*' })
+        assertEquals("P*'s all-round 9-cell; C* S*orm, not S*or*; S*br*3", CanopyModel.masked("PD's all-round 9-cell; CF Storm, not Storm; Sabre3"))
+        assertEquals("P* 的全能 9 气室", CanopyModel.masked("PD 的全能 9 气室"))
+        for (m in CanopyModel.ALL) {
+            val text = CanopyModel.masked(m.descriptionKey)
+            for (raw in listOf("Sabre3", "Storm", "Valkyrie", "Lightning", "Spectre")) assertFalse(text, raw in text)
+        }
+    }
+
+    @Test
+    fun trafficFliesASeriesOfItsType() {
+        for (type in CanopyType.entries) repeat(20) {
+            assertEquals(type, CanopyModel.traffic(type).type)
+        }
+        assertEquals("navigator", CanopyModel.traffic(CanopyType.STUDENT).key)
+    }
 }

@@ -306,11 +306,11 @@ private fun DetailPage(
                 )
             }
             Column(Modifier.width(column).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(s(model.leadKey), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
+                Text(CanopyModel.masked(s(model.leadKey)), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = p.foreground)
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     if (showsSizes) SizeList(model, sizeDraft, onSize)
                     else Text(
-                        s(model.descriptionKey), fontSize = 13.sp, lineHeight = 18.sp, color = p.foreground,
+                        CanopyModel.masked(s(model.descriptionKey)), fontSize = 13.sp, lineHeight = 18.sp, color = p.foreground,
                         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
                     )
                 }

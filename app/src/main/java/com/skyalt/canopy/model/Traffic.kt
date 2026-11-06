@@ -1,6 +1,5 @@
 package com.skyalt.canopy.model
 
-import com.skyalt.canopy.scene.CanopyMeshShape
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -20,7 +19,14 @@ data class Accident(val kind: Kind, /** Seconds into the run. */ val time: Doubl
 }
 
 /** How a computer-flown canopy looks, for the scene. */
-data class TrafficAppearance(val id: Int, val areaSquareFeet: Double, val colorIndex: Int, val isStudent: Boolean)
+data class TrafficAppearance(
+    val id: Int,
+    val areaSquareFeet: Double,
+    val colorIndex: Int,
+    val isStudent: Boolean,
+    /** The series flown; see [CanopyModel.traffic]. */
+    val modelKey: String = CanopyModel.STUDENT_KEY,
+)
 
 /** One moment of a computer-flown canopy, for the scene and the replay. */
 data class TrafficFrame(
@@ -136,13 +142,15 @@ class TrafficCanopy(
     private var evadeDirection = 0.0
 
     val isStudent get() = performance.type == CanopyType.STUDENT
+    /** The series flown, matching the type: a student on the Navigator, a swooper on a high-performance wing. */
+    var modelKey = CanopyModel.STUDENT_KEY
     /** Committed to the carving turn, the dive or the plane-out: no wobble and no evasion. */
     val isInSwoop get() = phase == Phase.SwoopTurn || phase == Phase.SwoopFinal || phase == Phase.PlaneOut
     val span get() = performance.span
     val isFlying get() = phase != Phase.Landed
     val canopyCentre get() = state.canopyCentre
 
-    val appearance get() = TrafficAppearance(id, performance.areaSquareFeet, colorIndex, isStudent)
+    val appearance get() = TrafficAppearance(id, performance.areaSquareFeet, colorIndex, isStudent, modelKey)
 
     val frame get() = TrafficFrame(state.position, state.heading, state.bank, state.pitch, inputs.left, inputs.right, phase == Phase.Landed)
 
@@ -770,7 +778,7 @@ class TrafficSimulation(val canopies: List<TrafficCanopy> = emptyList()) {
         )
 
         /** A canopy's reach for collisions: a little under half its span. */
-        fun canopyRadius(areaSquareFeet: Double) = 3.4 * CanopyMeshShape.scale(areaSquareFeet)
+        fun canopyRadius(areaSquareFeet: Double) = 3.4 * CanopyRigGeometry.scale(areaSquareFeet)
 
         /** Wing loadings, lb/ft², the types are flown at. */
         fun loadingRange(type: CanopyType) = when (type) {
@@ -824,9 +832,10 @@ class TrafficSimulation(val canopies: List<TrafficCanopy> = emptyList()) {
                 val groupMember = students != null && index < students.count
                 val type = if (groupMember) CanopyType.STUDENT else pick(mix)
                 val loading = if (groupMember) students!!.wingLoading.random() else loadingRange(type).random()
-                val area = Math.round(areaRange(type).random() / 5) * 5.0
+                val model = CanopyModel.traffic(type)
+                val area = model.nearestSize(areaRange(type).random())
                 val weight = (loading * area / CanopyPerformance.POUNDS_PER_KILOGRAM).clamp(40.0, 160.0)
-                val performance = CanopyPerformance(weight, area, type)
+                val performance = CanopyPerformance(weight, area, type, model.coefficients)
                 val aero = AeroParameters(performance)
                 val hand = configuration.hand
                 val isSwooper = type == CanopyType.PERFORMANCE || type == CanopyType.CROSS_BRACED
@@ -898,6 +907,7 @@ class TrafficSimulation(val canopies: List<TrafficCanopy> = emptyList()) {
                     wobblePhase = DoubleArray(3) { Random.nextDouble(0.0, 2 * PI) },
                     brakeBias = if (type == CanopyType.STUDENT) Random.nextDouble(0.08, 0.25) else Random.nextDouble(0.0, 0.08),
                 )
+                canopy.modelKey = model.key
                 canopy.holdAltitude = waypoints[0].y + 15
                 canopies += canopy
             }

@@ -13,6 +13,8 @@ import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AeroParameters
 import com.skyalt.canopy.model.AircraftState
 import com.skyalt.canopy.model.CanopyModel
+import com.skyalt.canopy.model.CanopyRigGeometry
+import com.skyalt.canopy.model.CanopyType
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.TrafficAppearance
 import com.skyalt.canopy.model.TrafficFrame
@@ -77,28 +79,17 @@ class SceneController {
     private lateinit var handMesh: GpuMesh
 
     // Dynamic meshes
-    private lateinit var topMesh: GpuMesh
-    private lateinit var bottomMesh: GpuMesh
-    private lateinit var inletMesh: GpuMesh
-    private lateinit var tipMeshes: List<GpuMesh>
-    private lateinit var ribMesh: GpuMesh
-    private lateinit var lineMesh: GpuMesh
-    private lateinit var brakeMesh: GpuMesh
-    private lateinit var riserMesh: GpuMesh
     private lateinit var dropLineMesh: GpuMesh
     private lateinit var trailMesh: GpuMesh
     private val ghostMeshes = ArrayList<GpuMesh>()
 
-    private val builder = CanopyMeshBuilder()
-    private var canopyScale = 1.0
-    /** The chosen series' own model, flown in place of the procedural wing once it has loaded; see [setCanopy]. */
+    /** The chosen series' own model; see [setCanopy]. */
     private var canopyRig: GpuRig? = null
     private var canopyRigScale = 1f
     /** Counts the requests, so a slow load for a canopy no longer chosen is dropped. */
     private var canopyGeneration = 0
-    @Volatile private var pendingRig: Pair<Int, CanopyModelRig?>? = null
+    @Volatile private var pendingRig: Pair<Int, CanopyModelRig>? = null
     private val canopyRigModel = FloatArray(16)
-    private var tipAlpha = 1f
     private var jumperAlpha = 1f
 
     private val rigModel = FloatArray(16)
@@ -206,16 +197,19 @@ class SceneController {
     private var personParts: List<List<GpuPart>>? = null
 
     // The other canopies
-    private class TrafficVariant(val top: GpuMesh, val bottom: GpuMesh, val inlet: GpuMesh, val lines: GpuMesh)
-    private class TrafficRig(val top: FloatArray, val bottom: FloatArray, val student: Boolean, val bucket: Int) {
+    private class TrafficRig(val modelKey: String, val scale: Float, val student: Boolean) {
         val model = FloatArray(16)
         val jumper = FloatArray(16)
+        val canopy = FloatArray(16)
         var variant = 0
         var visible = false
         var landed = false
     }
-    private val trafficBuilder = CanopyMeshBuilder()
-    private val trafficVariants = HashMap<Int, List<TrafficVariant>>()
+    /** Each series' model at no, half and full brake, built once off the GL thread and shared by every canopy flying it. */
+    private val trafficShapes = java.util.concurrent.ConcurrentHashMap<String, List<List<RigPart>>>()
+    private val trafficLoading = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** The same on the GPU, built on first draw. */
+    private val trafficVariants = HashMap<String, List<GpuParts>>()
     private var trafficJumpers: List<List<GpuPart>>? = null
     private val trafficRigs = ArrayList<TrafficRig>()
 
@@ -242,10 +236,6 @@ class SceneController {
         handMesh = GpuMesh().apply { set(Primitives.sphere(0.07f, 10, 14)) }
         labelMesh = GpuMesh().apply { set(Primitives.billboardQuad(4f)) }
 
-        topMesh = GpuMesh(); bottomMesh = GpuMesh(); inletMesh = GpuMesh()
-        tipMeshes = listOf(GpuMesh(), GpuMesh())
-        ribMesh = GpuMesh(GLES30.GL_LINES); lineMesh = GpuMesh(GLES30.GL_LINES)
-        brakeMesh = GpuMesh(GLES30.GL_LINES); riserMesh = GpuMesh(GLES30.GL_LINES)
         dropLineMesh = GpuMesh(GLES30.GL_LINES)
         trailMesh = GpuMesh()
         ghostMeshes.clear()
@@ -283,24 +273,18 @@ class SceneController {
     }
 
     /**
-     * Flies the series' own model at the size chosen: built off the GL
-     * thread from the bundled file, the procedural wing standing in until
-     * it is ready, and scaled by the square root of the area ratio about
-     * the harness, lines and all. Without a model the procedural wing
-     * flies at the size.
+     * Flies the series' own model at the size chosen, scaled by the square
+     * root of the area ratio about the harness, lines and all. The model
+     * is built off the GL thread from the bundled file; until it is ready
+     * the previous one keeps flying.
      */
-    fun setCanopy(model: CanopyModel?, areaSquareFeet: Double) {
-        canopyScale = CanopyMeshShape.scale(areaSquareFeet)
+    fun setCanopy(model: CanopyModel, areaSquareFeet: Double) {
         canopyGeneration += 1
         val generation = canopyGeneration
-        if (model == null) {
-            installCanopyRig(null)
-            return
-        }
         canopyRigScale = sqrt(max(1.0, areaSquareFeet) / model.modelSize).toFloat()
         if (canopyRig?.rig?.key == model.key) return
         Thread {
-            pendingRig = generation to CanopyModelFiles.rig(model)
+            CanopyModelFiles.rig(model)?.let { pendingRig = generation to it }
         }.apply { name = "canopy-model"; start() }
     }
 
@@ -310,43 +294,36 @@ class SceneController {
         if (pending.first == canopyGeneration) installCanopyRig(pending.second)
     }
 
-    /** Hangs the model from the jumper's shoulders and hides the procedural wing, or brings the wing back. */
-    private fun installCanopyRig(rig: CanopyModelRig?) {
+    /** Hangs the model from the jumper's shoulders in place of the last. */
+    private fun installCanopyRig(rig: CanopyModelRig) {
         canopyRig?.release()
-        canopyRig = rig?.let { GpuRig(it) }
+        canopyRig = GpuRig(rig)
     }
 
     private fun updateCanopy(dL: Double, dR: Double, stall: Double, collapse: Double) {
         applyPendingRig()
-        canopyRig?.let { gpu ->
-            val rig = gpu.rig
-            rig.update(dL.toFloat(), dR.toFloat(), stall.toFloat(), collapse.toFloat())
-            val s = canopyRigScale
-            val h = CanopyModelRig.HARNESS_HEIGHT
-            val l = rig.togglePosition(true, dL.toFloat())
-            val r = rig.togglePosition(false, dR.toFloat())
+        val left = dL.toFloat()
+        val right = dR.toFloat()
+        val h = CanopyModelRig.HARNESS_HEIGHT
+        val gpu = canopyRig
+        if (gpu == null) {
+            // Still loading: the hands where the toggles will be.
+            val y = h + CanopyModelRig.RISER_LENGTH - CanopyModelRig.TOGGLE_DROP
+            val travel = CanopyModelRig.TOGGLE_TRAVEL
             placeArms(
-                floatArrayOf(l[0] * s, h + l[1] * s, l[2] * s),
-                floatArrayOf(r[0] * s, h + r[1] * s, r[2] * s),
+                floatArrayOf(-CanopyModelRig.LINK_X, y - travel * left.coerceIn(0f, 1f), 0.06f),
+                floatArrayOf(CanopyModelRig.LINK_X, y - travel * right.coerceIn(0f, 1f), 0.06f),
             )
             return
         }
-        builder.update(dL, dR, stall, collapse, canopyScale)
-        topMesh.set(builder.topVertices, normals = builder.topNormals, colors = builder.topColors, indices = builder.skinIndices)
-        bottomMesh.set(builder.bottomVertices, normals = builder.bottomNormals, colors = builder.bottomColors, indices = builder.skinIndices)
-        inletMesh.set(builder.inletVertices, normals = builder.inletNormals, indices = builder.inletIndices)
-        tipAlpha = max(0.0, 1 - 3 * collapse).toFloat()
-        for (i in 0..1) tipMeshes[i].set(builder.tipVertices[i], normals = builder.tipNormals[i], indices = builder.tipIndices)
-        ribMesh.set(builder.ribSegments.data, builder.ribSegments.size)
-        lineMesh.set(builder.lineSegments.data, builder.lineSegments.size)
-        brakeMesh.set(builder.brakeSegments.data, builder.brakeSegments.size)
-        riserMesh.set(builder.riserSegments.data, builder.riserSegments.size)
-
-        // The hands follow the brake lines.
-        val lp = CanopyMeshShape.LINE_LENGTH.toFloat()
+        val rig = gpu.rig
+        rig.update(left, right, stall.toFloat(), collapse.toFloat())
+        val s = canopyRigScale
+        val l = rig.togglePosition(true, left)
+        val r = rig.togglePosition(false, right)
         placeArms(
-            floatArrayOf(builder.leftHand[0], builder.leftHand[1] + lp, builder.leftHand[2]),
-            floatArrayOf(builder.rightHand[0], builder.rightHand[1] + lp, builder.rightHand[2]),
+            floatArrayOf(l[0] * s, h + l[1] * s, l[2] * s),
+            floatArrayOf(r[0] * s, h + r[1] * s, r[2] * s),
         )
     }
 
@@ -366,7 +343,7 @@ class SceneController {
         Matrix.rotateM(scratch, 0, (-frame.heading / DEG).toFloat(), 0f, 1f, 0f)
         Matrix.rotateM(scratch, 0, (frame.pitch / DEG).toFloat(), 1f, 0f, 0f)
         Matrix.rotateM(scratch, 0, (-frame.bank / DEG).toFloat(), 0f, 0f, 1f)
-        val l = CanopyMeshShape.LINE_LENGTH.toFloat()
+        val l = CanopyRigGeometry.LINE_LENGTH.toFloat()
         // Offset = R·(0, L, 0): the second column of R times L.
         val ox = scratch[4] * l; val oy = scratch[5] * l; val oz = scratch[6] * l
         val px = frame.position.x.toFloat(); val py = frame.position.y.toFloat(); val pz = frame.position.z.toFloat()
@@ -771,8 +748,7 @@ class SceneController {
         if (showsPaths) for (i in ghostTrailPoints.indices) draw(ghostMeshes[i], identity, color(pathStyle.history, 1.0), lit = false)
 
         // The rig
-        val flown = canopyRig
-        if (flown != null) drawCanopyRig(flown) else drawProceduralCanopy()
+        canopyRig?.let { drawCanopyRig(it) }
         draw(dropLineMesh, identity, floatArrayOf(0.055f, 0.102f, 0.157f, 0.35f), lit = false)
         if (jumperAlpha > 0.01f) drawJumper()
         drawTraffic()
@@ -810,23 +786,6 @@ class SceneController {
             } else canopyRigModel
             draw(mesh, model, WHITE, lit = true, vertexColor = true)
         }
-    }
-
-    private fun drawProceduralCanopy() {
-        draw(topMesh, rigModel, WHITE, lit = true, vertexColor = true)
-        draw(bottomMesh, rigModel, WHITE, lit = true, vertexColor = true)
-        draw(inletMesh, rigModel, CanopyMeshBuilder.rgb(0x2a1a12), lit = true)
-        if (tipAlpha > 0.01f) {
-            for (i in 0..1) {
-                val c = CanopyMeshBuilder.CELL_COLORS[if (i == 0) 0 else CanopyMeshShape.CELLS - 1].copyOf()
-                c[3] = tipAlpha
-                draw(tipMeshes[i], rigModel, c, lit = true)
-            }
-        }
-        draw(ribMesh, rigModel, floatArrayOf(0.102f, 0.122f, 0.149f, 0.35f), lit = false)
-        draw(lineMesh, rigModel, floatArrayOf(0.957f, 0.957f, 0.941f, 0.8f), lit = false)
-        draw(brakeMesh, rigModel, CanopyMeshBuilder.rgb(0xffd23f), lit = false)
-        draw(riserMesh, rigModel, CanopyMeshBuilder.rgb(0x1a1f26), lit = false)
     }
 
     // MARK: - Clouds
@@ -970,16 +929,29 @@ class SceneController {
 
     // MARK: - Traffic
 
-    /** A rig for each of the other canopies: the wing in its own colour at the bucketed size, the lines and a jumper. */
+    /** A rig for each of the other canopies: its series' model at its size, a jumper under it. */
     fun setTraffic(appearances: List<TrafficAppearance>) {
         trafficRigs.clear()
         for (appearance in appearances) {
-            val bucket = max(2, Math.round(appearance.areaSquareFeet / 30).toInt())
-            val hex = TRAFFIC_PALETTE[appearance.colorIndex % TRAFFIC_PALETTE.size]
-            val top = CanopyMeshBuilder.rgb(hex)
-            val bottom = floatArrayOf(top[0] * 0.8f, top[1] * 0.8f, top[2] * 0.8f, 1f)
-            trafficRigs += TrafficRig(top, bottom, appearance.isStudent, bucket)
+            val model = CanopyModel.forKey(appearance.modelKey) ?: CanopyModel.fallback(CanopyType.STUDENT)
+            trafficRigs += TrafficRig(model.key, sqrt(max(1.0, appearance.areaSquareFeet) / model.modelSize).toFloat(), appearance.isStudent)
+            loadTrafficModel(model)
         }
+    }
+
+    /** Builds the series' three brake positions off the GL thread, once. */
+    private fun loadTrafficModel(model: CanopyModel) {
+        if (trafficShapes.containsKey(model.key) || !trafficLoading.add(model.key)) return
+        Thread {
+            val rig = CanopyModelFiles.rig(model)
+            if (rig != null) {
+                trafficShapes[model.key] = listOf(0f, 0.5f, 1f).map { brake ->
+                    rig.update(brake, brake, 0f, 0f)
+                    rig.snapshot()
+                }
+            }
+            trafficLoading.remove(model.key)
+        }.apply { name = "canopy-traffic"; start() }
     }
 
     /**
@@ -988,7 +960,7 @@ class SceneController {
      * of three brake positions; a landed one keeps only its jumper.
      */
     fun updateTraffic(frames: List<TrafficFrame>) {
-        val l = CanopyMeshShape.LINE_LENGTH.toFloat()
+        val l = CanopyRigGeometry.LINE_LENGTH.toFloat()
         val r = FloatArray(16)
         for ((i, rig) in trafficRigs.withIndex()) {
             val frame = frames.getOrNull(i)
@@ -1009,26 +981,11 @@ class SceneController {
             Matrix.multiplyMM(rig.model, 0, scratch, 0, r, 0)
             rig.model.copyInto(rig.jumper)
             Matrix.translateM(rig.jumper, 0, 0f, -l, 0f)
+            rig.jumper.copyInto(rig.canopy)
+            Matrix.translateM(rig.canopy, 0, 0f, CanopyModelRig.HARNESS_HEIGHT, 0f)
+            Matrix.scaleM(rig.canopy, 0, rig.scale, rig.scale, rig.scale)
             val brake = (frame.leftBrake + frame.rightBrake) / 2
             rig.variant = if (brake < 0.25) 0 else if (brake < 0.75) 1 else 2
-        }
-    }
-
-    /** The wing at no, half and full brake for a size bucket (30 ft² steps). */
-    private fun trafficVariants(bucket: Int): List<TrafficVariant> = trafficVariants.getOrPut(bucket) {
-        val scale = CanopyMeshShape.scale(bucket * 30.0)
-        listOf(0.0, 0.5, 1.0).map { brake ->
-            val b = trafficBuilder
-            b.update(brake, brake, 0.0, 0.0, scale)
-            val lines = FloatArray(b.lineSegments.size + b.riserSegments.size)
-            b.lineSegments.data.copyInto(lines, 0, 0, b.lineSegments.size)
-            b.riserSegments.data.copyInto(lines, b.lineSegments.size, 0, b.riserSegments.size)
-            TrafficVariant(
-                GpuMesh().apply { set(b.topVertices, normals = b.topNormals, indices = b.skinIndices) },
-                GpuMesh().apply { set(b.bottomVertices, normals = b.bottomNormals, indices = b.skinIndices) },
-                GpuMesh().apply { set(b.inletVertices, normals = b.inletNormals, indices = b.inletIndices) },
-                GpuMesh(GLES30.GL_LINES).apply { set(lines, lines.size) },
-            )
         }
     }
 
@@ -1038,11 +995,16 @@ class SceneController {
         for (rig in trafficRigs) {
             if (!rig.visible) continue
             if (!rig.landed) {
-                val v = trafficVariants(rig.bucket)[rig.variant]
-                draw(v.top, rig.model, rig.top, lit = true)
-                draw(v.bottom, rig.model, rig.bottom, lit = true)
-                draw(v.inlet, rig.model, INLET, lit = true)
-                draw(v.lines, rig.model, TRAFFIC_LINES, lit = false)
+                val variants = trafficVariants[rig.modelKey]
+                    ?: trafficShapes[rig.modelKey]?.map { shape -> GpuParts(shape).also { it.sync() } }?.also { trafficVariants[rig.modelKey] = it }
+                variants?.getOrNull(rig.variant)?.forEachPart { mesh, part ->
+                    val model = if (part.offsetY != 0f) {
+                        rig.canopy.copyInto(scratch2)
+                        Matrix.translateM(scratch2, 0, 0f, part.offsetY, 0f)
+                        scratch2
+                    } else rig.canopy
+                    draw(mesh, model, WHITE, lit = true, vertexColor = true)
+                }
             }
             for (part in jumpers[if (rig.student) 0 else 1]) drawPart(part, rig.jumper)
         }
@@ -1121,12 +1083,6 @@ class SceneController {
         const val EYE_HEIGHT = 0.45
         const val TRAIL_MAXIMUM = 4000
         const val WAKE_LIMIT = 900
-        private val INLET = floatArrayOf(0.165f, 0.102f, 0.071f, 1f)
-        private val TRAFFIC_LINES = floatArrayOf(0.957f, 0.957f, 0.941f, 0.7f)
-        private val TRAFFIC_PALETTE = intArrayOf(
-            0xe4582b, 0x2f6fd6, 0xf2c12e, 0x1f7a4d, 0x8e44ad, 0xe67e22, 0x16a085, 0xc0392b,
-            0x2980b9, 0xd35400, 0x27ae60, 0x7f8c8d, 0xf39c12, 0x1abc9c, 0x9b59b6, 0x34495e,
-        )
         const val WINDSOCK_POLE = 10.0
         const val WINDSOCK_LENGTH = 10.0
         const val WINDSOCK_MOUTH = 1.4

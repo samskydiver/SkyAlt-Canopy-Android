@@ -1,6 +1,5 @@
 package com.skyalt.canopy.model
 
-import com.skyalt.canopy.scene.CanopyMeshShape
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -323,7 +322,7 @@ data class AircraftFlight(
                 touchdown = Vec3(Airfield.RUNWAY_WEST_X + touchdownFromThreshold, 0.0, Airfield.RUNWAY_CENTRE_Z),
                 heading = 90 * DEG,
             )
-            val wakeHeight = SCENARIO_START_ALTITUDE + 1 + CanopyMeshShape.LINE_LENGTH + WAKE_ABOVE_CANOPY
+            val wakeHeight = SCENARIO_START_ALTITUDE + 1 + CanopyRigGeometry.LINE_LENGTH + WAKE_ABOVE_CANOPY
             val glideHeight = wakeHeight + WakeProfile.AIRCRAFT.sink * SECONDS_AHEAD - GROUND_HEIGHT
             return flight.copy(startDistance = glideHeight / tan(flight.approachAngle) - flight.approachSpeed * SECONDS_AHEAD)
         }

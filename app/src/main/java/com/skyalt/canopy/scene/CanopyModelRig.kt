@@ -42,6 +42,11 @@ class CanopyModelRig private constructor(
         }
     }
 
+    /** The parts as they are now, copied: one still shape to draw again and again. */
+    fun snapshot(): List<RigPart> = parts.map { part ->
+        RigPart(part.positions.copyOf(), part.normals.copyOf(), part.colors, part.indices).also { it.offsetY = part.offsetY }
+    }
+
     /** Where the hand holds the toggle, in the model's own metres from the harness. */
     fun togglePosition(left: Boolean, brake: Float): FloatArray {
         val rest = toggles.firstOrNull { it.isLeft == left }?.centroid

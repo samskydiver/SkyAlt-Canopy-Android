@@ -50,14 +50,14 @@ object CanopyModelFiles {
     }
 }
 
-/** A rig's parts on the GPU, uploaded again when a part's shape has changed. */
-class GpuRig(val rig: CanopyModelRig) {
-    private val meshes = rig.parts.map { GpuMesh() }
-    private val uploaded = IntArray(rig.parts.size) { -1 }
+/** Rig parts on the GPU, each uploaded again when its shape has changed. */
+open class GpuParts(val parts: List<RigPart>) {
+    private val meshes = parts.map { GpuMesh() }
+    private val uploaded = IntArray(parts.size) { -1 }
 
     /** Brings the GPU copies up to date; call on the GL thread before drawing. */
     fun sync() {
-        for ((i, part) in rig.parts.withIndex()) {
+        for ((i, part) in parts.withIndex()) {
             val version = part.version
             if (uploaded[i] == version) continue
             meshes[i].set(part.positions, normals = part.normals, colors = part.colors, indices = part.indices)
@@ -65,9 +65,9 @@ class GpuRig(val rig: CanopyModelRig) {
         }
     }
 
-    /** Each part with its own mesh, for drawing under [model]. */
+    /** Each part with its own mesh. */
     inline fun forEachPart(action: (GpuMesh, RigPart) -> Unit) {
-        for (i in rig.parts.indices) action(meshAt(i), rig.parts[i])
+        for (i in parts.indices) action(meshAt(i), parts[i])
     }
 
     fun meshAt(i: Int) = meshes[i]
@@ -76,3 +76,6 @@ class GpuRig(val rig: CanopyModelRig) {
         for (m in meshes) m.release()
     }
 }
+
+/** A flown rig's parts on the GPU, following its shape. */
+class GpuRig(val rig: CanopyModelRig) : GpuParts(rig.parts)
