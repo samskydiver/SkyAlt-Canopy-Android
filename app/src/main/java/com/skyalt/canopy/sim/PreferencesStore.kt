@@ -7,6 +7,7 @@ import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.model.AircraftLogoPlacement
 import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AircraftTouchdownSettings
+import com.skyalt.canopy.model.CanopyModel
 import com.skyalt.canopy.model.CanopyType
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.RunwayPlacement
@@ -33,11 +34,15 @@ class PreferencesStore(context: Context) : SimulatorStore {
     override fun loadConfiguration(): SimulatorConfiguration {
         val d = SimulatorConfiguration()
         val j = json("configuration") ?: return d
+        val type = CanopyType.fromKey(j.optString("canopyType", d.canopyType.key))
+        // A setup saved before the catalogue becomes the series its type stood for; clamped() then moves the size onto one of its.
+        val modelKey = j.optString("canopyModelKey", "").takeIf { CanopyModel.forKey(it) != null } ?: CanopyModel.fallback(type).key
         return SimulatorConfiguration(
             startAltitudeMeters = j.optDouble("startAltitudeMeters", d.startAltitudeMeters),
             exitWeightKilograms = j.optDouble("exitWeightKilograms", d.exitWeightKilograms),
             canopyAreaSquareFeet = j.optDouble("canopyAreaSquareFeet", d.canopyAreaSquareFeet),
-            canopyType = CanopyType.fromKey(j.optString("canopyType", d.canopyType.key)),
+            canopyType = type,
+            canopyModelKey = modelKey,
             stallTolerance = j.optDouble("stallTolerance", d.stallTolerance),
             windSpeed = j.optDouble("windSpeed", d.windSpeed),
             windDirectionDegrees = j.optDouble("windDirectionDegrees", d.windDirectionDegrees),
@@ -61,6 +66,7 @@ class PreferencesStore(context: Context) : SimulatorStore {
             .put("exitWeightKilograms", c.exitWeightKilograms)
             .put("canopyAreaSquareFeet", c.canopyAreaSquareFeet)
             .put("canopyType", c.canopyType.key)
+            .put("canopyModelKey", c.canopyModelKey)
             .put("stallTolerance", c.stallTolerance)
             .put("windSpeed", c.windSpeed)
             .put("windDirectionDegrees", c.windDirectionDegrees)

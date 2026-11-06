@@ -58,9 +58,11 @@ data class SimulatorConfiguration(
     val startAltitudeMeters: Double = 300.0,
     /** Jumper plus gear, kilograms. */
     val exitWeightKilograms: Double = 80.0,
-    /** Square feet, as canopies are sold. */
-    val canopyAreaSquareFeet: Double = 230.0,
+    /** Square feet, as canopies are sold: one of the chosen series' sizes. */
+    val canopyAreaSquareFeet: Double = 220.0,
     val canopyType: CanopyType = CanopyType.STUDENT,
+    /** The Performance Designs series flown, chosen on the canopy page; its coefficients drive the flight model and its type the rules. */
+    val canopyModelKey: String = CanopyModel.STUDENT_KEY,
     /** Motion capture: how far 100% brake moves from 1.12 torso lengths, −0.1…+0.1. */
     val stallTolerance: Double = 0.0,
     val windSpeed: Double = 3.0,
@@ -83,7 +85,9 @@ data class SimulatorConfiguration(
     /** A chosen start point faces this way, degrees, instead of the pattern's entry (the aircraft scene). Not saved. */
     val startHeadingDegrees: Double? = null,
 ) {
-    val performance get() = CanopyPerformance(exitWeightKilograms, canopyAreaSquareFeet, canopyType)
+    val canopyModel get() = CanopyModel.forKey(canopyModelKey) ?: CanopyModel.fallback(canopyType)
+
+    val performance get() = CanopyPerformance(exitWeightKilograms, canopyAreaSquareFeet, canopyType, canopyModel.coefficients)
 
     /** A student canopy's brake lines stop a full flare short of the stall. */
     val studentMode get() = canopyType == CanopyType.STUDENT
@@ -98,6 +102,7 @@ data class SimulatorConfiguration(
         exitWeightKilograms != other.exitWeightKilograms ||
             canopyAreaSquareFeet != other.canopyAreaSquareFeet ||
             canopyType != other.canopyType ||
+            canopyModelKey != other.canopyModelKey ||
             windSpeed != other.windSpeed ||
             windDirectionDegrees != other.windDirectionDegrees ||
             referencePattern != other.referencePattern ||
@@ -115,7 +120,8 @@ data class SimulatorConfiguration(
         return copy(
             startAltitudeMeters = startAltitudeMeters.clamp(50.0, 3000.0),
             exitWeightKilograms = exitWeightKilograms.clamp(40.0, 160.0),
-            canopyAreaSquareFeet = canopyAreaSquareFeet.clamp(60.0, 400.0),
+            // The size is one the series is made in.
+            canopyAreaSquareFeet = canopyModel.nearestSize(canopyAreaSquareFeet.clamp(60.0, 400.0)),
             stallTolerance = stallTolerance.clamp(-0.1, 0.1),
             windSpeed = windSpeed.clamp(0.0, 15.0),
             windDirectionDegrees = normalizedDegrees(Math.rint(windDirectionDegrees)),

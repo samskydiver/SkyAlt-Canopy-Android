@@ -522,7 +522,7 @@ class FlightState private constructor(start: StartPlacement, aero: AeroParameter
         /** The point the lines' length above [position], turned by heading, pitch and bank as the rig is drawn. */
         fun canopyCentre(position: Vec3, heading: Double, pitch: Double, bank: Double): Vec3 {
             // R = Ry(−heading) · Rx(pitch) · Rz(−bank) applied to (0, L, 0).
-            val l = com.skyalt.canopy.scene.CanopyMeshShape.LINE_LENGTH
+            val l = CanopyRigGeometry.LINE_LENGTH
             // Rz(−bank)·(0, L, 0) = (L sin bank, L cos bank, 0)
             val x1 = l * sin(bank); val y1 = l * cos(bank)
             // Rx(pitch)
