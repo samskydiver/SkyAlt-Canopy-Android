@@ -6,11 +6,13 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import com.skyalt.canopy.model.CanopyModel
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * The bundled PD models and previews, each read once and shared: the
- * parsed files for the flown rig and the canopy page's 3D view, the
- * decoded pictures for its tiles. Safe to call off the main thread.
+ * The bundled PD models and previews and the P750XL, each read once and
+ * shared: the parsed files for the flown rig and the canopy page's 3D view,
+ * the decoded pictures for its tiles, the aircraft for the scenes. Safe to
+ * call off the main thread.
  */
 object CanopyModelFiles {
     @Volatile private var assets: AssetManager? = null
@@ -36,6 +38,39 @@ object CanopyModelFiles {
 
     /** A new rig of the series, to fly or to show; each one keeps its own shape. */
     fun rig(model: CanopyModel): CanopyModelRig? = model(model)?.let { CanopyModelRig.build(it, model.key) }
+
+    @Volatile private var aircraftModel: AircraftModel.Prepared? = null
+    private var aircraftFailed = false
+    private val aircraftLock = Any()
+    private val aircraftLoading = AtomicBoolean(false)
+
+    /** The P750XL, once it has been read; null while it is still loading. */
+    fun loadedAircraft(): AircraftModel.Prepared? = aircraftModel
+
+    /** Starts reading the P750XL off the calling thread, unless it is read or being read. */
+    fun preloadAircraft() {
+        if (aircraftModel != null || !aircraftLoading.compareAndSet(false, true)) return
+        Thread({
+            try { aircraft() } finally { aircraftLoading.set(false) }
+        }, "aircraft-model").start()
+    }
+
+    /** The P750XL, reading it the first time (a second caller waits for the first); null when the file cannot be read. */
+    fun aircraft(): AircraftModel.Prepared? {
+        aircraftModel?.let { return it }
+        synchronized(aircraftLock) {
+            aircraftModel?.let { return it }
+            if (aircraftFailed) return null
+            val manager = assets ?: return null
+            return try {
+                manager.open(AircraftModel.ASSET).use { AircraftModel.prepare(Glb.parse(it.readBytes())) }.also { aircraftModel = it }
+            } catch (e: Exception) {
+                Log.e("AircraftModel", "could not read ${AircraftModel.ASSET}", e)
+                aircraftFailed = true
+                null
+            }
+        }
+    }
 
     fun preview(model: CanopyModel): Bitmap? {
         synchronized(previews) { previews[model.key] }?.let { return it }

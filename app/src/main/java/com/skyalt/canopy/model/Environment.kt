@@ -57,13 +57,15 @@ data class AircraftLiverySettings(
 }
 
 /**
- * Where the logo sits on the P750's sides: its centre, metres along the
- * fuselage from the wing's datum (+ towards the tail) and up from the
- * centre line, and its width along the fuselage.
+ * Where the logo sits on the P750XL's sides: its centre, metres along the
+ * fuselage from the aircraft's origin at mid-length (+ towards the tail)
+ * and up from 1.6 m above the ground, and its width along the fuselage. Out
+ * of the box it sits on the cabin side under the windows, ahead of the
+ * door, clear of the near wing in the side view.
  */
 data class AircraftLogoPlacement(
-    val along: Double = -2.7,
-    val height: Double = -0.3,
+    val along: Double = -1.0,
+    val height: Double = 0.08,
     val width: Double = 0.8,
 ) {
     fun clamped() = AircraftLogoPlacement(

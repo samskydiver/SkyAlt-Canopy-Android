@@ -18,7 +18,6 @@ import com.skyalt.canopy.model.CanopyType
 import com.skyalt.canopy.model.CloudSettings
 import com.skyalt.canopy.model.TrafficAppearance
 import com.skyalt.canopy.model.TrafficFrame
-import com.skyalt.canopy.model.V3
 import com.skyalt.canopy.model.WakeSample
 import com.skyalt.canopy.model.Compass
 import com.skyalt.canopy.model.DEG
@@ -185,9 +184,7 @@ class SceneController {
     private var aircraftLivery = AircraftLiverySettings.DEFAULT_COLOR_HEX
     private var aircraftMarkings = AircraftMarkingsSettings()
     private var aircraftLogo: android.graphics.Bitmap? = null
-    private var aircraftBody: List<GpuPart>? = null
-    private var aircraftPropeller: List<GpuPart>? = null
-    private var aircraftHub = V3(0f, 0f, 0f)
+    private var aircraftParts = AircraftGpu()
     private val aircraftModel = FloatArray(16)
     private val propellerModel = FloatArray(16)
     private var aircraftPlaced = false
@@ -253,7 +250,7 @@ class SceneController {
         cloudMesh = null; cloudTextures = intArrayOf(0, 0); cloudTextureDensity = -1.0
         wakeMesh = null
         airfieldFlats = null; airfieldSolids = null
-        aircraftBody = null; aircraftPropeller = null
+        aircraftParts = AircraftGpu()
         personParts = null
         trafficVariants.clear(); trafficJumpers = null
         // The flown model's buffers went with the old context; its shape stays.
@@ -860,23 +857,15 @@ class SceneController {
         airfieldVisible = visible
     }
 
-    /** The colour of the aircraft's wings and tail, 0xRRGGBB; the model is built again in it. GL thread. */
+    /** The colour of the aircraft's wings and tail, 0xRRGGBB, painted on before the next frame. GL thread. */
     fun setAircraftLivery(hex: Int) {
-        if (hex == aircraftLivery) return
         aircraftLivery = hex
-        aircraftBody?.forEach { it.release() }
-        aircraftPropeller?.forEach { it.release() }
-        aircraftBody = null; aircraftPropeller = null
     }
 
-    /** The registration and the logo on the aircraft's sides; the model is built again with them. GL thread. */
+    /** The registration and the logo on the aircraft's sides, put on before the next frame. GL thread. */
     fun setAircraftMarkings(markings: AircraftMarkingsSettings, logo: android.graphics.Bitmap?) {
-        if (markings == aircraftMarkings && logo === aircraftLogo) return
         aircraftMarkings = markings
         aircraftLogo = logo
-        aircraftBody?.forEach { it.release() }
-        aircraftPropeller?.forEach { it.release() }
-        aircraftBody = null; aircraftPropeller = null
     }
 
     fun setAircraft(visible: Boolean) {
@@ -912,18 +901,20 @@ class SceneController {
                 for (part in kinds[if (i == 0) 0 else 1]) drawPart(part, root)
             }
         }
-        if (aircraftVisible && aircraftPlaced && aircraftPresent) {
-            if (aircraftBody == null) {
-                val built = Models.aircraft(aircraftLivery, aircraftMarkings.registration, aircraftLogo, aircraftMarkings.logo)
-                aircraftBody = GpuPart.of(built.body)
-                aircraftPropeller = GpuPart.of(built.propeller)
-                aircraftHub = built.hub
-            }
-            for (part in aircraftBody!!) drawPart(part, aircraftModel)
+        // The P750XL once its model has loaded (it loads in the background), the registration and logo pulled forward over its skin.
+        val aircraft = aircraftParts
+        if (aircraftVisible && aircraftPlaced && aircraftPresent &&
+            aircraft.sync(aircraftLivery, aircraftMarkings.registration, aircraftLogo, aircraftMarkings.logo)
+        ) {
+            for (part in aircraft.body) drawPart(part, aircraftModel)
+            GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
+            GLES30.glPolygonOffset(-1f, -2f)
+            for (part in aircraft.decals) drawPart(part, aircraftModel)
+            GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
             aircraftModel.copyInto(propellerModel)
-            Matrix.translateM(propellerModel, 0, aircraftHub.x, aircraftHub.y, aircraftHub.z)
+            Matrix.translateM(propellerModel, 0, aircraft.hub.x, aircraft.hub.y, aircraft.hub.z)
             Matrix.rotateM(propellerModel, 0, Math.toDegrees(propellerAngle).toFloat(), 0f, 0f, 1f)
-            for (part in aircraftPropeller!!) drawPart(part, propellerModel)
+            for (part in aircraft.propeller) drawPart(part, propellerModel)
         }
     }
 

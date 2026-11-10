@@ -5,9 +5,10 @@ import java.nio.ByteOrder
 import kotlin.math.pow
 
 /**
- * The parts of a binary glTF (.glb) the canopy models use: the meshes with
- * their positions, normals and triangles, each primitive's material name
- * and base colour, and the morph targets (the brake shapes). Node
+ * The parts of a binary glTF (.glb) the canopy and aircraft models use: the
+ * meshes with their positions, normals, texture coordinates and triangles,
+ * each primitive's material name and base colour, and the morph targets
+ * (the brake shapes). Node
  * transforms are applied, so every mesh comes out in the file's root
  * frame. Plain Kotlin, so the unit tests read the bundled files too.
  */
@@ -21,6 +22,8 @@ object Glb {
         val indices: IntArray,
         /** Per target, the offset of every vertex (x, y, z). */
         val targets: List<FloatArray>,
+        /** TEXCOORD_0 (u, v per vertex, v = 0 at the image's top), when the file has it. */
+        val uvs: FloatArray? = null,
     )
 
     class Mesh(val name: String, val primitives: List<Primitive>, val targetNames: List<String>)
@@ -85,6 +88,9 @@ object Glb {
                 val positions = transform(local, m, 1f)
                 val normals = (attributes["NORMAL"] as? Number)?.let { normalize(transform(floats(it.toInt()), m, 0f)) }
                 val indices = (p["indices"] as? Number)?.let { ints(it.toInt()) } ?: IntArray(count) { it }
+                val uvs = (attributes["TEXCOORD_0"] as? Number)?.toInt()
+                    ?.takeIf { ((accessors[it] as Map<*, *>)["componentType"] as Number).toInt() == 5126 }
+                    ?.let { floats(it) }
                 val targets = p.list("targets").map { t ->
                     val position = ((t as Map<*, *>)["POSITION"] as? Number)?.toInt()
                     if (position == null) FloatArray(count * 3) else transform(floats(position), m, 0f)
@@ -95,7 +101,7 @@ object Glb {
                 val color = if (factor != null && factor.size >= 4) {
                     floatArrayOf(srgb(factor[0]), srgb(factor[1]), srgb(factor[2]), factor[3])
                 } else floatArrayOf(0.8f, 0.8f, 0.8f, 1f)
-                Primitive(material?.get("name") as? String ?: "", color, positions, normals, indices, targets)
+                Primitive(material?.get("name") as? String ?: "", color, positions, normals, indices, targets, uvs)
             }
             return Mesh(nodeName.ifEmpty { mesh["name"] as? String ?: "" }, primitives, names)
         }
