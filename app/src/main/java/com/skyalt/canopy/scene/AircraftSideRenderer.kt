@@ -62,6 +62,7 @@ class AircraftSideRenderer(private val onPicture: (Bitmap) -> Unit) {
     private var shader: SceneShader? = null
     private val aircraft = AircraftGpu()
     private var pixels: ByteBuffer? = null
+    private var flipped: ByteArray? = null
     private val view = FloatArray(16)
     private val projection = FloatArray(16)
     private val viewProj = FloatArray(16)
@@ -124,13 +125,9 @@ class AircraftSideRenderer(private val onPicture: (Bitmap) -> Unit) {
         GLES30.glBlendFuncSeparate(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA, GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthFunc(GLES30.GL_LEQUAL)
-        // The rows come back bottom first, so the view is drawn upside down to read top first;
-        // that turns the triangles round, and the front faces with them.
-        GLES30.glFrontFace(GLES30.GL_CW)
-
         // The camera off the left side looking straight across: up the picture +y, across it +z.
         Matrix.setLookAtM(view, 0, -40f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
-        Matrix.orthoM(projection, 0, r.zMin, r.zMax, r.yMax, r.yMin, 1f, 100f)
+        Matrix.orthoM(projection, 0, r.zMin, r.zMax, r.yMin, r.yMax, 1f, 100f)
         Matrix.multiplyMM(viewProj, 0, projection, 0, view, 0)
 
         GLES30.glUseProgram(shader.program)
@@ -155,7 +152,6 @@ class AircraftSideRenderer(private val onPicture: (Bitmap) -> Unit) {
         Matrix.setIdentityM(propellerModel, 0)
         Matrix.translateM(propellerModel, 0, hub.x, hub.y, hub.z)
         for (part in aircraft.propeller) drawPart(shader, part, propellerModel)
-        GLES30.glFrontFace(GLES30.GL_CCW)
 
         val size = r.width * r.height * 4
         val buffer = pixels?.takeIf { it.capacity() >= size }
@@ -163,10 +159,16 @@ class AircraftSideRenderer(private val onPicture: (Bitmap) -> Unit) {
         buffer.clear()
         GLES30.glPixelStorei(GLES30.GL_PACK_ALIGNMENT, 1)
         GLES30.glReadPixels(0, 0, r.width, r.height, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buffer)
-        buffer.position(0)
-        buffer.limit(size)
+        // The rows come back bottom first; the picture's go top first. (Drawing the view upside
+        // down instead would turn the triangles round, and the two-sided lighting with them.)
+        val row = r.width * 4
+        val bytes = flipped?.takeIf { it.size >= size } ?: ByteArray(size).also { flipped = it }
+        for (y in 0 until r.height) {
+            buffer.position((r.height - 1 - y) * row)
+            buffer.get(bytes, y * row, row)
+        }
         // Premultiplied already: the ground is clear and the edges are averaged into it.
-        return Bitmap.createBitmap(r.width, r.height, Bitmap.Config.ARGB_8888).apply { copyPixelsFromBuffer(buffer) }
+        return Bitmap.createBitmap(r.width, r.height, Bitmap.Config.ARGB_8888).apply { copyPixelsFromBuffer(ByteBuffer.wrap(bytes, 0, size)) }
     }
 
     private val scratch = FloatArray(16)
