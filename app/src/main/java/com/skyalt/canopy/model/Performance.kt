@@ -48,8 +48,9 @@ data class CanopyPerformance(
     val exitWeightKilograms: Double,
     val areaSquareFeet: Double,
     val type: CanopyType,
+    /** A chosen PD series' own coefficients; the type's for the air traffic. */
+    val coefficients: CanopyTypeCoefficients = type.coefficients,
 ) {
-    val coefficients get() = type.coefficients
 
     /** Pounds per square foot. */
     val wingLoading get() = exitWeightKilograms * POUNDS_PER_KILOGRAM / maxOf(1.0, areaSquareFeet)

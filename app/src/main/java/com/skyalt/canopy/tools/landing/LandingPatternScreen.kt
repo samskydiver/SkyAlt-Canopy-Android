@@ -79,6 +79,18 @@ import com.skyalt.canopy.tools.SegmentedPicker
 import com.skyalt.canopy.tools.SwipeNumberInput
 import com.skyalt.canopy.tools.ToolScaffold
 import com.skyalt.canopy.tools.map.ApplyCameraRequests
+import com.skyalt.canopy.tools.map.Planning3DButtons
+import com.skyalt.canopy.tools.map.Planning3DGroundLoader
+import com.skyalt.canopy.tools.map.Planning3DLayer
+import com.skyalt.canopy.tools.map.Planning3DMapHook
+import com.skyalt.canopy.tools.map.Planning3DState
+import com.skyalt.canopy.tools.map.rememberPlanning3DState
+import com.skyalt.canopy.tools.planning.Path3DMarker
+import com.skyalt.canopy.tools.planning.Path3DPath
+import com.skyalt.canopy.tools.planning.Path3DPoint
+import com.skyalt.canopy.tools.planning.PlanningPath3DContent
+import androidx.compose.ui.graphics.toArgb
+import com.skyalt.canopy.tools.map.SavesPlanningSettings
 import com.skyalt.canopy.tools.map.BasePointBadge
 import com.skyalt.canopy.tools.map.DraggableMapMarker
 import com.skyalt.canopy.tools.map.LabeledDot
@@ -143,23 +155,32 @@ fun LandingPatternScreen(
     var topInset by remember { mutableIntStateOf(0) }
     var bottomInset by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
+    val state3d = rememberPlanning3DState()
+    val content3d = path3DContent(session, settings.altitudeUnit, s)
+    Planning3DGroundLoader(state3d, content3d, session.mapStyle) { session.heldMapView = it }
 
     LaunchedEffect(isPro) { session.enforceProAccess(isPro) }
     LaunchedEffect(tracker.location) { tracker.location?.let { session.handleLocationFix(Coordinate(it.latitude, it.longitude)) } }
     ApplyCameraRequests(session.camera, session.cameraRequest) { session.cameraRequest = null }
+    LaunchedEffect(Unit) { session.resumeSavedPlanIfNeeded() }
+    SavesPlanningSettings(session.camera, session::saveSettings)
 
     ToolScaffold(s("Landing Pattern Assistant"), onBack) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             PlanningMap(session, settings.altitudeUnit, tracker.hasPermission, with(density) {
                 PaddingValues(top = topInset.toDp(), bottom = bottomInset.toDp())
-            })
+            }, state3d)
+            Planning3DLayer(state3d, content3d, Modifier.fillMaxSize())
 
             Column(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 6.dp).onSizeChanged { topInset = it.height },
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 ResultCard(session, settings.altitudeUnit)
-                if (!session.hasBasePoint) {
+                // The plan is edited on the map; 3D only shows it.
+                if (state3d.shows) {
+                    // No banners in 3D.
+                } else if (!session.hasBasePoint) {
                     MapInstructionBanner(s(session.basePointInstructionKey), Color(0xFF34C759), Icons.Filled.TouchApp)
                 } else if (session.mode == LandingPatternMode.EXPERT) {
                     MapInstructionBanner(s(session.waypointInstructionKey), Color(0xFF32ADE6), Icons.Filled.TouchApp)
@@ -171,12 +192,17 @@ fun LandingPatternScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End,
             ) {
-                MapButton(Icons.Filled.MyLocation, s("Center on Current Location"), showsProgress = tracker.hasPermission && tracker.location == null) {
-                    tracker.start()
-                    session.requestCentering(tracker.location?.let { Coordinate(it.latitude, it.longitude) })
+                if (!state3d.shows) {
+                    MapButton(Icons.Filled.MyLocation, s("Center on Current Location"), showsProgress = tracker.hasPermission && tracker.location == null) {
+                        tracker.start()
+                        session.requestCentering(tracker.location?.let { Coordinate(it.latitude, it.longitude) })
+                    }
                 }
                 MapButton(session.mapStyle.icon, s("Change Map Style")) { session.cycleMapStyle() }
-                if (session.hasBasePoint) {
+                if (state3d.shows || !content3d.isEmpty) {
+                    Planning3DButtons(state3d)
+                }
+                if (session.hasBasePoint && !state3d.shows) {
                     MapButton(Icons.Filled.Replay, s("Reset Plan")) { showsReset = true }
                 }
                 MapButton(session.wind.mode.icon, s("Wind Data Mode"), showsProgress = session.wind.isLoading) { showsWind = true }
@@ -188,8 +214,10 @@ fun LandingPatternScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                WaypointActions(session)
-                ConfigurationPanel(session, isPro) { onLocked(ProFeature.SWOOP_MODE) }
+                if (!state3d.shows) {
+                    WaypointActions(session)
+                    ConfigurationPanel(session, isPro) { onLocked(ProFeature.SWOOP_MODE) }
+                }
             }
 
             if (session.wind.isLoading) {
@@ -235,7 +263,7 @@ fun LandingPatternScreen(
 }
 
 @Composable
-private fun PlanningMap(session: LandingPatternSession, unit: AltitudeUnit, myLocation: Boolean, contentPadding: PaddingValues) {
+private fun PlanningMap(session: LandingPatternSession, unit: AltitudeUnit, myLocation: Boolean, contentPadding: PaddingValues, state3d: Planning3DState) {
     val s = LocalStrings.current
     val density = LocalDensity.current
     val lineWidth = with(density) { 4.dp.toPx() }
@@ -256,7 +284,7 @@ private fun PlanningMap(session: LandingPatternSession, unit: AltitudeUnit, myLo
             onEnd = { session.finishEnvelopeRotation(rotationStartHeading, it) },
         ),
         cameraPositionState = session.camera,
-        properties = MapProperties(mapType = session.mapStyle.mapType, isMyLocationEnabled = myLocation),
+        properties = MapProperties(mapType = session.mapStyle.mapType, isMyLocationEnabled = myLocation && !state3d.capturing),
         uiSettings = MapUiSettings(zoomControlsEnabled = false, myLocationButtonEnabled = false, mapToolbarEnabled = false, tiltGesturesEnabled = false, indoorLevelPickerEnabled = false),
         contentPadding = contentPadding,
         onMapClick = { latLng ->
@@ -267,87 +295,129 @@ private fun PlanningMap(session: LandingPatternSession, unit: AltitudeUnit, myLo
             }
         },
     ) {
-        val landing = session.landingPoint
-        if (session.mode == LandingPatternMode.NORMAL && landing != null) {
-            DraggableMapMarker("landing", landing, "landing", zIndex = 3f, onDragEnd = { session.moveStandardLandingPoint(it) }) {
-                BasePointBadge(Icons.Filled.SportsScore, Color(0xFF34C759))
-            }
-        }
-
-        val preview = session.envelopePreviewDegrees
-        if (preview != null && landing != null) {
-            // While a pattern is being rotated only its rotated lines are drawn.
-            for (display in session.displaySolutions) {
-                key(display.id) {
-                    Polyline(
-                        LandingPatternSession.rotated(display.solution.path, landing, preview).map { it.latLng() },
-                        color = display.color, width = lineWidth, pattern = dash, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap(),
-                    )
+        Planning3DMapHook(state3d)
+        // While the 3D view photographs the map for its ground, the plan stays off it.
+        if (!state3d.capturing) {
+            val landing = session.landingPoint
+            if (session.mode == LandingPatternMode.NORMAL && landing != null) {
+                DraggableMapMarker("landing", landing, "landing", zIndex = 3f, onDragEnd = { session.moveStandardLandingPoint(it) }) {
+                    BasePointBadge(Icons.Filled.SportsScore, Color(0xFF34C759))
                 }
             }
-        } else {
-            for (display in session.displaySolutions) {
-                key(display.id) {
-                    if (display.solution.path.size >= 2) {
+
+            val preview = session.envelopePreviewDegrees
+            if (preview != null && landing != null) {
+                // While a pattern is being rotated only its rotated lines are drawn.
+                for (display in session.displaySolutions) {
+                    key(display.id) {
                         Polyline(
-                            display.solution.path.map { it.latLng() },
+                            LandingPatternSession.rotated(display.solution.path, landing, preview).map { it.latLng() },
                             color = display.color, width = lineWidth, pattern = dash, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap(),
                         )
                     }
-                    for (checkpoint in display.solution.checkpoints) {
-                        if (checkpoint.kind == CheckpointKind.LANDING) continue
-                        key(checkpoint.kind) {
-                            val label = checkpointLabel(checkpoint.altitudeAGLFeet, unit, s)
-                            StaticMapMarker(checkpoint.coordinate, label, display.color, anchor = labeledDotAnchor()) {
-                                LabeledDot(label, display.color)
+                }
+            } else {
+                for (display in session.displaySolutions) {
+                    key(display.id) {
+                        if (display.solution.path.size >= 2) {
+                            Polyline(
+                                display.solution.path.map { it.latLng() },
+                                color = display.color, width = lineWidth, pattern = dash, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap(),
+                            )
+                        }
+                        for (checkpoint in display.solution.checkpoints) {
+                            if (checkpoint.kind == CheckpointKind.LANDING) continue
+                            key(checkpoint.kind) {
+                                val label = checkpointLabel(checkpoint.altitudeAGLFeet, unit, s)
+                                StaticMapMarker(checkpoint.coordinate, label, display.color, anchor = labeledDotAnchor()) {
+                                    LabeledDot(label, display.color)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (session.mode == LandingPatternMode.NORMAL) {
+                    for (arrow in session.legArrows) {
+                        key(arrow.id) {
+                            StaticMapMarker(arrow.coordinate, arrow.color, rotation = arrow.bearingDegrees.toFloat(), flat = true, zIndex = 1.5f) {
+                                LegArrowBadge(arrow.color)
                             }
                         }
                     }
                 }
             }
-            if (session.mode == LandingPatternMode.NORMAL) {
-                for (arrow in session.legArrows) {
+
+            if (session.mode == LandingPatternMode.EXPERT) {
+                val route = session.swoopRouteCoordinates()
+                if (route.size >= 3) {
+                    Polyline(route.dropLast(1).map { it.latLng() }, color = Color(0xFF32ADE6), width = lineWidth, pattern = dash, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap())
+                }
+                if (route.size >= 2) {
+                    Polyline(route.takeLast(2).map { it.latLng() }, color = Color(0xFF32ADE6).copy(alpha = 0.7f), width = lineWidth, pattern = dash, startCap = RoundCap(), endCap = RoundCap())
+                }
+                for (arrow in session.swoopLegArrows) {
                     key(arrow.id) {
                         StaticMapMarker(arrow.coordinate, arrow.color, rotation = arrow.bearingDegrees.toFloat(), flat = true, zIndex = 1.5f) {
                             LegArrowBadge(arrow.color)
                         }
                     }
                 }
-            }
-        }
-
-        if (session.mode == LandingPatternMode.EXPERT) {
-            val route = session.swoopRouteCoordinates()
-            if (route.size >= 3) {
-                Polyline(route.dropLast(1).map { it.latLng() }, color = Color(0xFF32ADE6), width = lineWidth, pattern = dash, jointType = JointType.ROUND, startCap = RoundCap(), endCap = RoundCap())
-            }
-            if (route.size >= 2) {
-                Polyline(route.takeLast(2).map { it.latLng() }, color = Color(0xFF32ADE6).copy(alpha = 0.7f), width = lineWidth, pattern = dash, startCap = RoundCap(), endCap = RoundCap())
-            }
-            for (arrow in session.swoopLegArrows) {
-                key(arrow.id) {
-                    StaticMapMarker(arrow.coordinate, arrow.color, rotation = arrow.bearingDegrees.toFloat(), flat = true, zIndex = 1.5f) {
-                        LegArrowBadge(arrow.color)
-                    }
-                }
-            }
-            for (point in session.swoopDisplayPoints) {
-                key(point.id) {
-                    val altitude = point.altitudeFeet?.let { swoopPointLabel(it, unit, s) } ?: s("Unavailable")
-                    val selected = session.selectedSwoopPoint == point.selection
-                    DraggableMapMarker(
-                        point.id, point.coordinate, point.label, altitude, selected, point.color,
-                        anchor = Offset(0.5f, 1f), zIndex = 3f,
-                        onClick = { session.selectSwoopPoint(point.selection) },
-                        onDrag = { session.previewSwoopPointDrag(point.selection, it) },
-                        onDragEnd = { session.finishDraggingSwoopPoint(point.selection, it) },
-                    ) {
-                        SwoopPointBadge(point.label, altitude, point.color, selected)
+                for (point in session.swoopDisplayPoints) {
+                    key(point.id) {
+                        val altitude = point.altitudeFeet?.let { swoopPointLabel(it, unit, s) } ?: s("Unavailable")
+                        val selected = session.selectedSwoopPoint == point.selection
+                        DraggableMapMarker(
+                            point.id, point.coordinate, point.label, altitude, selected, point.color,
+                            anchor = Offset(0.5f, 1f), zIndex = 3f,
+                            onClick = { session.selectSwoopPoint(point.selection) },
+                            onDrag = { session.previewSwoopPointDrag(point.selection, it) },
+                            onDragEnd = { session.finishDraggingSwoopPoint(point.selection, it) },
+                        ) {
+                            SwoopPointBadge(point.label, altitude, point.color, selected)
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/** The patterns, or the swoop route, at their heights, for the 3D view. */
+private fun path3DContent(session: LandingPatternSession, unit: AltitudeUnit, s: Strings): PlanningPath3DContent {
+    val paths = mutableListOf<Path3DPath>()
+    val markers = mutableListOf<Path3DMarker>()
+    when (session.mode) {
+        LandingPatternMode.NORMAL -> {
+            for (display in session.displaySolutions) {
+                val checkpoints = display.solution.checkpoints
+                if (checkpoints.size < 2) continue
+                val argb = display.color.toArgb()
+                paths += Path3DPath(display.id, checkpoints.map { Path3DPoint(it.coordinate, it.altitudeAGLFeet * WindMath.METERS_PER_FOOT) }, argb)
+                for (checkpoint in checkpoints) {
+                    if (checkpoint.kind == CheckpointKind.LANDING) continue
+                    markers += Path3DMarker(
+                        "${display.id}-${checkpoint.kind.name}",
+                        Path3DPoint(checkpoint.coordinate, checkpoint.altitudeAGLFeet * WindMath.METERS_PER_FOOT),
+                        argb,
+                        checkpointLabel(checkpoint.altitudeAGLFeet, unit, s),
+                    )
+                }
+            }
+            session.landingPoint?.let { markers += Path3DMarker("landing", Path3DPoint(it, 0.0), PATTERN_GREEN.toArgb(), s("Landing")) }
+        }
+        LandingPatternMode.EXPERT -> {
+            val route = session.swoopDisplayPoints
+            val feet = PlanningPath3DContent.filledAltitudes(route.map { it.altitudeFeet })
+            val points = route.zip(feet).map { (point, f) -> Path3DPoint(point.coordinate, f * WindMath.METERS_PER_FOOT) }
+            if (points.size >= 2) paths += Path3DPath("swoop-route", points, SWOOP_CYAN.toArgb())
+            for ((point, position) in route.zip(points)) {
+                val altitude = point.altitudeFeet
+                val title = if (altitude != null && point.selection != SwoopSelection.Landing) "${point.label} · ${swoopPointLabel(altitude, unit, s)}" else point.label
+                markers += Path3DMarker(point.id, position, point.color.toArgb(), title)
+            }
+        }
+    }
+    return PlanningPath3DContent(paths, markers)
 }
 
 @Composable

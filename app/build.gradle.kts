@@ -13,8 +13,8 @@ android {
         applicationId = "com.skyalt.canopy"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.6.0"
+        versionCode = 11
+        versionName = "0.7.0"
         // Google Maps key: local.properties MAPS_API_KEY=... on the Mac, or
         // the MAPS_API_KEY environment variable in CI. Never committed.
         val localProps = Properties().apply {

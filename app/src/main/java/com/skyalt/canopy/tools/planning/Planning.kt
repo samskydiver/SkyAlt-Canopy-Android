@@ -173,7 +173,13 @@ data class ExitSpotSolution(val targetPoint: Coordinate, val referenceSolutions:
     val hasInvalidLandingPattern get() = referenceSolutions.any { !it.hasValidLandingPattern }
 }
 
-data class CutawaySolution(val centerPath: List<Coordinate>, val landingCenter: Coordinate, val landingRadiusMeters: Double)
+data class CutawaySolution(
+    val centerPath: List<Coordinate>,
+    val landingCenter: Coordinate,
+    val landingRadiusMeters: Double,
+    /** Height above the ground of each [centerPath] point. */
+    val centerPathAltitudesMeters: List<Double> = emptyList(),
+)
 
 /** Port of FlightPlanningEngine. */
 object FlightPlanningEngine {
@@ -230,6 +236,7 @@ object FlightPlanningEngine {
             integration.cumulative.map { MapGeometry.coordinate(center, it) },
             MapGeometry.coordinate(center, integration.displacement),
             radiusMeters,
+            integration.cumulative.indices.map { max(cutawayAltitudeAGLMeters - WindMath.PASSIVE_ALTITUDE_STEP_METERS * it, 0.0) },
         )
     }
 

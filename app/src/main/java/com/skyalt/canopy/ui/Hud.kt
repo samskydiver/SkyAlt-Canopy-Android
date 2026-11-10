@@ -198,7 +198,7 @@ fun ModeChip(state: UiState) {
     val s = LocalStrings.current
     val c = state.configuration
     val weight = state.units.weightValue(c.exitWeightKilograms).roundToInt()
-    val canopy = "${s(c.canopyType.titleKey)} · $weight ${state.units.weightSymbol} · ${c.canopyAreaSquareFeet.roundToInt()} ft²"
+    val canopy = "${c.canopyModel.name} · $weight ${state.units.weightSymbol} · ${c.canopyAreaSquareFeet.roundToInt()} ft²"
     // The scene being flown is named in front of the canopy.
     val scenario = state.scenario
     val text = if (scenario != null) "${scenario.number} · ${s(scenario.titleKey)} · $canopy" else canopy

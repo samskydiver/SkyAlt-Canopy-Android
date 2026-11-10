@@ -60,6 +60,19 @@ import com.skyalt.canopy.tools.AltixOrange
 import com.skyalt.canopy.tools.ToolScaffold
 import com.skyalt.canopy.tools.landing.MapPanel
 import com.skyalt.canopy.tools.map.ApplyCameraRequests
+import com.skyalt.canopy.tools.map.Planning3DButtons
+import com.skyalt.canopy.tools.map.Planning3DGroundLoader
+import com.skyalt.canopy.tools.map.Planning3DLayer
+import com.skyalt.canopy.tools.map.Planning3DMapHook
+import com.skyalt.canopy.tools.map.Planning3DState
+import com.skyalt.canopy.tools.map.rememberPlanning3DState
+import com.skyalt.canopy.tools.planning.Path3DMarker
+import com.skyalt.canopy.tools.planning.Path3DMarkerStyle
+import com.skyalt.canopy.tools.planning.Path3DPath
+import com.skyalt.canopy.tools.planning.Path3DPoint
+import com.skyalt.canopy.tools.planning.Path3DRing
+import com.skyalt.canopy.tools.planning.PlanningPath3DContent
+import com.skyalt.canopy.ui.Strings
 import com.skyalt.canopy.tools.map.BasePointBadge
 import com.skyalt.canopy.tools.map.CutawayManualWindSection
 import com.skyalt.canopy.tools.map.MapButton
@@ -91,6 +104,9 @@ fun CutawayFinderScreen(session: CutawayFinderSession, settings: AppSettings, on
     var topInset by remember { mutableIntStateOf(0) }
     var bottomInset by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
+    val state3d = rememberPlanning3DState()
+    val content3d = path3DContent(session, settings.altitudeUnit, s)
+    Planning3DGroundLoader(state3d, content3d, session.mapStyle)
 
     LaunchedEffect(tracker.location) { tracker.location?.let { session.handleLocationFix(Coordinate(it.latitude, it.longitude)) } }
     ApplyCameraRequests(session.camera, session.cameraRequest) { session.cameraRequest = null }
@@ -98,24 +114,32 @@ fun CutawayFinderScreen(session: CutawayFinderSession, settings: AppSettings, on
     ToolScaffold(s("Cutaway Finder"), onBack) { padding ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
             val landscape = maxWidth > maxHeight
-            CutawayMap(session, tracker.hasPermission, with(density) { PaddingValues(top = topInset.toDp(), bottom = bottomInset.toDp()) })
+            CutawayMap(session, tracker.hasPermission, with(density) { PaddingValues(top = topInset.toDp(), bottom = bottomInset.toDp()) }, state3d)
+            Planning3DLayer(state3d, content3d, Modifier.fillMaxSize())
 
             WindStatusBadge(session, Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 8.dp).onSizeChanged { topInset = it.height })
 
             val controls: @Composable () -> Unit = {
-                MapButton(Icons.Filled.MyLocation, s("Center on Current Location"), showsProgress = tracker.hasPermission && tracker.location == null) {
-                    tracker.start()
-                    session.requestCentering(tracker.location?.let { Coordinate(it.latitude, it.longitude) })
+                if (!state3d.shows) {
+                    MapButton(Icons.Filled.MyLocation, s("Center on Current Location"), showsProgress = tracker.hasPermission && tracker.location == null) {
+                        tracker.start()
+                        session.requestCentering(tracker.location?.let { Coordinate(it.latitude, it.longitude) })
+                    }
+                }
+                Planning3DButtons(state3d, enabled = session.circleCenter != null) {
+                    if (session.isDrawing) session.toggleDrawing()
                 }
                 MapButton(session.mapStyle.icon, s("Change Map Style")) { session.cycleMapStyle() }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (session.showsDrawTip && !landscape) {
-                        DrawTip()
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    MapButton(if (session.isDrawing) Icons.Filled.Close else Icons.Filled.Draw, s("Draw Cutaway Area"), isActive = session.isDrawing) {
-                        session.showsDrawTip = false
-                        session.toggleDrawing()
+                if (!state3d.shows) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (session.showsDrawTip && !landscape) {
+                            DrawTip()
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        MapButton(if (session.isDrawing) Icons.Filled.Close else Icons.Filled.Draw, s("Draw Cutaway Area"), isActive = session.isDrawing) {
+                            session.showsDrawTip = false
+                            session.toggleDrawing()
+                        }
                     }
                 }
                 MapButton(session.mode.icon, s("Wind Data Mode"), showsProgress = session.isLoading) { showsWind = true }
@@ -166,7 +190,7 @@ fun CutawayFinderScreen(session: CutawayFinderSession, settings: AppSettings, on
 }
 
 @Composable
-private fun CutawayMap(session: CutawayFinderSession, myLocation: Boolean, contentPadding: PaddingValues) {
+private fun CutawayMap(session: CutawayFinderSession, myLocation: Boolean, contentPadding: PaddingValues, state3d: Planning3DState) {
     val s = LocalStrings.current
     val density = LocalDensity.current
     fun px(dp: Float) = with(density) { dp.dp.toPx() }
@@ -195,34 +219,69 @@ private fun CutawayMap(session: CutawayFinderSession, myLocation: Boolean, conte
             }
         },
         cameraPositionState = session.camera,
-        properties = MapProperties(mapType = session.mapStyle.mapType, isMyLocationEnabled = myLocation),
+        properties = MapProperties(mapType = session.mapStyle.mapType, isMyLocationEnabled = myLocation && !state3d.capturing),
         uiSettings = MapUiSettings(
             zoomControlsEnabled = false, myLocationButtonEnabled = false, mapToolbarEnabled = false, tiltGesturesEnabled = false,
             indoorLevelPickerEnabled = false, scrollGesturesEnabled = !drawing, zoomGesturesEnabled = !drawing, rotationGesturesEnabled = !drawing,
         ),
         contentPadding = contentPadding,
     ) {
-        val center = session.circleCenter
-        if (center != null) {
-            Circle(center.latLng(), fillColor = Color(0xFFFF9500).copy(alpha = 0.24f), radius = session.circleRadiusMeters, strokeColor = Color(0xFFFF9500), strokeWidth = px(3f))
-            StaticMapMarker(center, "cutaway", anchor = Offset(0.5f, 0.5f), zIndex = 2f) {
-                BasePointBadge(Icons.Filled.TrackChanges, Color(0xFFFF9500), size = 30)
+        Planning3DMapHook(state3d)
+        // While the 3D view photographs the map for its ground, the plan stays off it.
+        if (!state3d.capturing) {
+            val center = session.circleCenter
+            if (center != null) {
+                Circle(center.latLng(), fillColor = Color(0xFFFF9500).copy(alpha = 0.24f), radius = session.circleRadiusMeters, strokeColor = Color(0xFFFF9500), strokeWidth = px(3f))
+                StaticMapMarker(center, "cutaway", anchor = Offset(0.5f, 0.5f), zIndex = 2f) {
+                    BasePointBadge(Icons.Filled.TrackChanges, Color(0xFFFF9500), size = 30)
+                }
             }
-        }
-        if (session.drawnCoordinates.size >= 2) {
-            Polyline(session.drawnCoordinates.map { it.latLng() }, color = Color(0xFFFFD60A), width = px(5f), zIndex = 3f)
-        }
-        val solution = session.solution
-        if (solution != null) {
-            Circle(solution.landingCenter.latLng(), fillColor = Color(0xFFFF3B30).copy(alpha = 0.25f), radius = solution.landingRadiusMeters, strokeColor = Color(0xFFFF3B30), strokeWidth = px(3f))
-            if (solution.centerPath.size >= 2) {
-                Polyline(solution.centerPath.map { it.latLng() }, color = Color(0xFFFFD60A).copy(alpha = 0.9f), width = px(3f), zIndex = 1f)
+            if (session.drawnCoordinates.size >= 2) {
+                Polyline(session.drawnCoordinates.map { it.latLng() }, color = Color(0xFFFFD60A), width = px(5f), zIndex = 3f)
             }
-            StaticMapMarker(solution.landingCenter, "landing", anchor = Offset(0.5f, 0.5f), zIndex = 2f) {
-                BasePointBadge(Icons.Filled.TrackChanges, Color(0xFFFF3B30), size = 30)
+            val solution = session.solution
+            if (solution != null) {
+                Circle(solution.landingCenter.latLng(), fillColor = Color(0xFFFF3B30).copy(alpha = 0.25f), radius = solution.landingRadiusMeters, strokeColor = Color(0xFFFF3B30), strokeWidth = px(3f))
+                if (solution.centerPath.size >= 2) {
+                    Polyline(solution.centerPath.map { it.latLng() }, color = Color(0xFFFFD60A).copy(alpha = 0.9f), width = px(3f), zIndex = 1f)
+                }
+                StaticMapMarker(solution.landingCenter, "landing", anchor = Offset(0.5f, 0.5f), zIndex = 2f) {
+                    BasePointBadge(Icons.Filled.TrackChanges, Color(0xFFFF3B30), size = 30)
+                }
             }
         }
     }
+}
+
+/** The cutaway area at its height, the drift of its centre down to the ground with heights along it, and where it lands. */
+private fun path3DContent(session: CutawayFinderSession, unit: AltitudeUnit, s: Strings): PlanningPath3DContent {
+    val center = session.circleCenter ?: return PlanningPath3DContent()
+    val orange = 0xFFFF9500.toInt()
+    val yellow = 0xFFFFD60A.toInt()
+    val red = 0xFFFF3B30.toInt()
+    val cutawayMeters = session.cutawayAltitudeFeet * WindMath.METERS_PER_FOOT
+    val top = Path3DPoint(center, cutawayMeters)
+    val altitudeText = s.format("%@ ft", grouped(session.cutawayAltitudeFeet)).let {
+        if (unit == AltitudeUnit.METERS) "$it · ${s.format("%@ m", grouped(cutawayMeters))}" else it
+    }
+    val rings = mutableListOf(Path3DRing("cutaway-area", top, session.circleRadiusMeters, orange))
+    val markers = mutableListOf(Path3DMarker("cutaway-area", top, orange, "${s("Cutaway area")} · $altitudeText"))
+    val paths = mutableListOf<Path3DPath>()
+    session.solution?.let { solution ->
+        val points = solution.centerPath.zip(solution.centerPathAltitudesMeters).map { (c, a) -> Path3DPoint(c, a) }
+        paths += Path3DPath("drift", points, yellow)
+        // Every 1,000 ft, or every 500 m.
+        val step = if (unit == AltitudeUnit.METERS) 500.0 else 1_000 * WindMath.METERS_PER_FOOT
+        for (tag in PlanningPath3DContent.heightTags(points, cutawayMeters, step)) {
+            val value = if (unit == AltitudeUnit.METERS) tag.altitudeMeters else tag.altitudeMeters / WindMath.METERS_PER_FOOT
+            val text = if (unit == AltitudeUnit.METERS) s.format("%@ m", grouped(value)) else s.format("%@ ft", grouped(value))
+            markers += Path3DMarker("height-${tag.altitudeMeters.roundToInt()}", tag, yellow, text, Path3DMarkerStyle.TAG)
+        }
+        val landing = Path3DPoint(solution.landingCenter, 0.0)
+        rings += Path3DRing("landing-area", landing, solution.landingRadiusMeters, red)
+        markers += Path3DMarker("landing-area", landing, red, s("Calculated landing point"))
+    }
+    return PlanningPath3DContent(paths, markers, rings)
 }
 
 @Composable

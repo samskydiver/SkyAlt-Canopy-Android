@@ -23,11 +23,11 @@ class FlightModelTest {
     @Test
     fun fullFlightSettlesOnThePerformanceModel() {
         for (type in CanopyType.entries) {
-            val c = SimulatorConfiguration(startAltitudeMeters = 3000.0, windSpeed = 0.0, canopyType = type, canopyAreaSquareFeet = 170.0, exitWeightKilograms = 85.0)
+            val c = SimulatorConfiguration(startAltitudeMeters = 3000.0, windSpeed = 0.0, canopyType = type, canopyModelKey = CanopyModel.fallback(type).key, canopyAreaSquareFeet = 170.0, exitWeightKilograms = 85.0)
             val state = fly(c, 20.0, 0.0, 0.0)
             val v = state.velocity
             val glide = hypot(v.x, v.z) / -v.y
-            assertEquals("glide ratio of $type", type.coefficients.glideRatio, glide, 0.15)
+            assertEquals("glide ratio of $type", c.performance.glideRatio, glide, 0.15)
             assertEquals("airspeed of $type", c.performance.airspeed, v.length, 0.4)
         }
     }

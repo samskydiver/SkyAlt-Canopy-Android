@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.Icon
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -34,7 +36,6 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.skyalt.canopy.model.CanopyType
 import com.skyalt.canopy.model.Compass
 import com.skyalt.canopy.model.DEG
 import com.skyalt.canopy.model.LineStyle
@@ -45,6 +46,7 @@ import com.skyalt.canopy.sim.SimulatorEngine
 import com.skyalt.canopy.sim.UiState
 import java.util.Locale
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 /** The settings drawer: flight setup, language, units, camera, path styles and the dropzone picture. */
 @Composable
@@ -53,6 +55,8 @@ fun SettingsContent(
     engine: SimulatorEngine,
     language: LanguageSetting,
     onOpenStartPoint: () -> Unit,
+    /** Opens the canopy page: the PD series and their sizes. */
+    onOpenCanopyPicker: () -> Unit,
     onChoosePicture: () -> Unit,
     onEditPicture: () -> Unit,
     onApply: () -> Unit,
@@ -71,7 +75,7 @@ fun SettingsContent(
         if (scenario.showsPaths) PathStyleEntry(onOpenPathStyles)
         return
     }
-    SetupPanel(state, engine, onOpenStartPoint, onApply)
+    SetupPanel(state, engine, onOpenStartPoint, onOpenCanopyPicker, onApply)
     Block(s("Language")) {
         // Each language is named in itself, so the way back is readable whichever is on.
         SegmentedButtons(
@@ -139,7 +143,7 @@ fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun SetupPanel(state: UiState, engine: SimulatorEngine, onOpenStartPoint: () -> Unit, onApply: () -> Unit) {
+private fun SetupPanel(state: UiState, engine: SimulatorEngine, onOpenStartPoint: () -> Unit, onOpenCanopyPicker: () -> Unit, onApply: () -> Unit) {
     val s = LocalStrings.current
     val p = LocalPalette.current
     val c = state.configuration
@@ -150,12 +154,11 @@ private fun SetupPanel(state: UiState, engine: SimulatorEngine, onOpenStartPoint
             NumberField(s("Exit weight"), u.weightSymbol, u.weightValue(c.exitWeightKilograms), { v ->
                 engine.updateConfiguration { it.copy(exitWeightKilograms = u.kilograms(v)) }
             }, 0, Modifier.weight(1f))
-            NumberField(s("Canopy size"), "ft²", c.canopyAreaSquareFeet, { v ->
-                engine.updateConfiguration { it.copy(canopyAreaSquareFeet = v) }
-            }, 0, Modifier.weight(1f))
+            CanopyEntry("${c.canopyModel.name} · ${c.canopyAreaSquareFeet.roundToInt()}", Modifier.weight(1f)) {
+                focus.clearFocus()
+                onOpenCanopyPicker()
+            }
         }
-        FieldLabel(s("Canopy type"))
-        SegmentedButtons(CanopyType.entries, { s(it.titleKey) }, c.canopyType, { t -> engine.updateConfiguration { it.copy(canopyType = t) } }, columns = 2)
         if (!c.studentMode) {
             FieldLabel(s("Stall tolerance"), signedPercent(c.stallTolerance))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -207,6 +210,30 @@ private fun SetupPanel(state: UiState, engine: SimulatorEngine, onOpenStartPoint
             focus.clearFocus()
             engine.applyAndReset()
             onApply()
+        }
+    }
+}
+
+/** The way to the canopy page, laid out like the number field beside it: the unit in the label, "Sabre3 · 150" in the box. */
+@Composable
+private fun CanopyEntry(text: String, modifier: Modifier, onClick: () -> Unit) {
+    val s = LocalStrings.current
+    val p = LocalPalette.current
+    val shape = RoundedCornerShape(5.dp)
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        FieldLabel(s("Canopy"), "ft²")
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(shape)
+                .background(p.surface2, shape)
+                .border(1.dp, p.line, shape)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = p.foreground, maxLines = 1, modifier = Modifier.weight(1f))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = p.muted, modifier = Modifier.size(16.dp))
         }
     }
 }

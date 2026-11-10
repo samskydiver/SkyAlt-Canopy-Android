@@ -93,6 +93,7 @@ import com.skyalt.canopy.tools.SwipeNumberInput
 import com.skyalt.canopy.tools.ToolScaffold
 import com.skyalt.canopy.tools.landing.MapPanel
 import com.skyalt.canopy.tools.map.ApplyCameraRequests
+import com.skyalt.canopy.tools.map.SavesPlanningSettings
 import com.skyalt.canopy.tools.map.BasePointBadge
 import com.skyalt.canopy.tools.map.DraggableMapMarker
 import com.skyalt.canopy.tools.map.MapButton
@@ -146,6 +147,8 @@ fun ExitSpotScreen(session: ExitSpotSession, settings: AppSettings, onBack: () -
     LaunchedEffect(settings.distanceUnit) { session.fallbackDistanceUnit = settings.distanceUnit }
     LaunchedEffect(tracker.location) { tracker.location?.let { session.handleLocationFix(Coordinate(it.latitude, it.longitude)) } }
     ApplyCameraRequests(session.camera, session.cameraRequest) { session.cameraRequest = null }
+    LaunchedEffect(Unit) { session.resumeSavedPlanIfNeeded() }
+    SavesPlanningSettings(session.camera, session::saveSettings)
 
     ToolScaffold(s("Exit Spot"), onBack) { padding ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
