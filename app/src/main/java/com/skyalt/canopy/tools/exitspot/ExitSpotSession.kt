@@ -28,7 +28,14 @@ import com.skyalt.canopy.tools.planning.WindMath
 import com.skyalt.canopy.tools.planning.WindProfile
 import com.skyalt.canopy.tools.planning.WindProfileClient
 import com.skyalt.canopy.tools.planning.WindVector
+import androidx.compose.runtime.snapshotFlow
+import com.skyalt.canopy.tools.map.cameraPosition
+import com.skyalt.canopy.tools.map.savedMapView
+import com.skyalt.canopy.tools.planning.ExitSpotSettings
+import com.skyalt.canopy.tools.planning.PlanningSettingsStore
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -102,11 +109,21 @@ object ExitRangeMetrics {
  * State and planning logic for the Exit Spot tool, port of
  * ExitSpotSession.swift. Outlives the screen so the plan survives leaving it.
  */
-class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
+class ExitSpotSession(
+    client: WindProfileClient = WindProfileClient.live,
+    /** Where the setup is kept between launches; null starts empty and saves nothing. */
+    private val store: PlanningSettingsStore? = null,
+) {
     private val scope = MainScope()
+    private val saved = ExitSpotSettings.decode(store?.load(ExitSpotSettings.KEY))
 
     // Map
-    val camera = CameraPositionState(CameraPosition.fromLatLngZoom(DEFAULT_MAP_CENTER.latLng(), 15f))
+    /** Opens where the map was left, or on a saved plan, before any GPS fix. */
+    val camera = CameraPositionState(
+        saved?.mapView?.cameraPosition
+            ?: saved?.landingPoint?.let { CameraPosition.fromLatLngZoom(it.latLng(), 15f) }
+            ?: CameraPosition.fromLatLngZoom(DEFAULT_MAP_CENTER.latLng(), 15f),
+    )
     var cameraRequest by mutableStateOf<CameraRequest?>(null)
     var shouldCenterOnNextLocation = true
     var mapStyle by mutableStateOf(PlanningMapStyle.SATELLITE)
@@ -155,9 +172,79 @@ class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
             updateDefaultFinalApproachHeading(profile)
             refreshSolution()
         } else {
+            if (!wind.isLoading) keepsMapOnNextCalculation = false
             invalidateSolution()
         }
     }
+
+    /** A saved plan waits for the tool to open before its wind is fetched. */
+    private var needsSavedPlanResume = false
+    /** The first calculation of a restored plan keeps the saved map view. */
+    private var keepsMapOnNextCalculation = false
+
+    init {
+        // Set directly, so nothing is fetched or solved until the tool opens.
+        saved?.let { saved ->
+            saved.landingPoint?.let { landing ->
+                landingPoint = landing
+                jumpRunCenter = saved.jumpRunCenter ?: landing
+                jumpRunBearingDegrees = Geodesy.normalizedDegrees(saved.jumpRunBearingDegrees)
+                isJumpRunCustomized = saved.isJumpRunCustomized
+            }
+            // The same limits as typing them in.
+            val exit = min(max(saved.exitAltitudeFeet, 4_000.0), 18_000.0)
+            deploymentAltitudeFeet = min(min(max(saved.deploymentAltitudeFeet, 3_500.0), 17_500.0), exit - 500)
+            exitAltitudeFeet = exit
+            finalApproachHeadingDegrees = Geodesy.normalizedDegrees(saved.finalApproachHeadingDegrees)
+            isFinalApproachHeadingCustomized = saved.isFinalApproachHeadingCustomized
+            landingPatternDirection = saved.landingPatternDirection
+            profileParameters = saved.restoredProfileParameters
+            wind.restore(saved.wind)
+            mapStyle = PlanningMapStyle.entries.firstOrNull { it.name == saved.mapStyle } ?: PlanningMapStyle.SATELLITE
+            selectedDistanceUnit = DistanceUnit.entries.firstOrNull { it.key == saved.distanceUnit }
+            needsSavedPlanResume = landingPoint != null
+            if (saved.mapView != null || landingPoint != null) shouldCenterOnNextLocation = false
+            keepsMapOnNextCalculation = saved.mapView != null && needsSavedPlanResume
+        }
+        if (store != null) {
+            // Saved half a second after the last change; the screen also saves when it closes.
+            scope.launch {
+                snapshotFlow { currentSettings() }.drop(1).collectLatest {
+                    delay(500)
+                    store.save(ExitSpotSettings.KEY, it.encode())
+                }
+            }
+        }
+    }
+
+    /** Fetches the wind for a plan restored from the last launch; called when the tool opens. */
+    fun resumeSavedPlanIfNeeded() {
+        if (!needsSavedPlanResume) return
+        needsSavedPlanResume = false
+        wind.resumeIfNeeded()
+    }
+
+    /** Writes the setup now: when the map comes to rest and when the tool closes. */
+    fun saveSettings() {
+        store?.save(ExitSpotSettings.KEY, currentSettings().encode())
+    }
+
+    private fun currentSettings() = ExitSpotSettings(
+        landingPoint = landingPoint,
+        jumpRunCenter = jumpRunCenter,
+        jumpRunBearingDegrees = jumpRunBearingDegrees,
+        isJumpRunCustomized = isJumpRunCustomized,
+        exitAltitudeFeet = exitAltitudeFeet,
+        deploymentAltitudeFeet = deploymentAltitudeFeet,
+        finalApproachHeadingDegrees = finalApproachHeadingDegrees,
+        isFinalApproachHeadingCustomized = isFinalApproachHeadingCustomized,
+        landingPatternDirection = landingPatternDirection,
+        profileParameters = profileParameters,
+        wind = wind.saved,
+        mapStyle = mapStyle.name,
+        distanceUnit = selectedDistanceUnit?.key,
+        mapView = camera.position.savedMapView,
+    )
 
     // Derived geometry
 
@@ -240,13 +327,13 @@ class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
         val normalized = Geodesy.normalizedDegrees(degrees)
         if (normalized == finalApproachHeadingDegrees) return
         finalApproachHeadingDegrees = normalized
-        refreshSolution(shouldFitMap = false)
+        refreshSolution(requestedFit = false)
     }
 
     fun updateLandingPatternDirection(direction: PatternDirection) {
         if (direction == landingPatternDirection) return
         landingPatternDirection = direction
-        refreshSolution(shouldFitMap = false)
+        refreshSolution(requestedFit = false)
     }
 
     fun toggleNotice() {
@@ -289,13 +376,13 @@ class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
     fun moveJumpRun(center: Coordinate) {
         jumpRunCenter = center
         isJumpRunCustomized = true
-        refreshSolution(shouldFitMap = false)
+        refreshSolution(requestedFit = false)
     }
 
     fun rotateJumpRun(bearingDegrees: Double) {
         jumpRunBearingDegrees = Geodesy.normalizedDegrees(bearingDegrees)
         isJumpRunCustomized = true
-        refreshSolution(shouldFitMap = false)
+        refreshSolution(requestedFit = false)
     }
 
     /** Re-anchors the run abeam the landing point so later rotations pivot there. */
@@ -305,7 +392,7 @@ class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
 
     fun finishJumpRunAdjustment() {
         snapJumpRunCenterToZeroPoint()
-        refreshSolution(shouldFitMap = false)
+        refreshSolution(requestedFit = false)
     }
 
     // Envelope rotation
@@ -368,7 +455,9 @@ class ExitSpotSession(client: WindProfileClient = WindProfileClient.live) {
 
     // Solving
 
-    private fun refreshSolution(shouldFitMap: Boolean = true) {
+    private fun refreshSolution(requestedFit: Boolean = true) {
+        val shouldFitMap = requestedFit && !keepsMapOnNextCalculation
+        keepsMapOnNextCalculation = false
         val landing = landingPoint
         val profile = wind.profile
         val run = jumpRunCoordinates

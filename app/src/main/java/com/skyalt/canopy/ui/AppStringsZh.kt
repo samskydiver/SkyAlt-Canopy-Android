@@ -534,6 +534,9 @@ internal object AppStringsZh {
         m["Wing Loading"] = "翼载"
         m["Wingload"] = "翼载"
         m["Wingload Calculator"] = "翼载计算器"
+        m["Show in 3D"] = "三维查看"
+        m["Show Map"] = "返回地图"
+        m["Top View"] = "俯视"
         m["your own picture under the target"] = "把你的图片放在目标下方"
     }
 

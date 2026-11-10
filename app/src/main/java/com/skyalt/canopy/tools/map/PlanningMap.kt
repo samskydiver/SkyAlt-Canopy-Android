@@ -38,6 +38,11 @@ import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.flow.drop
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -54,6 +59,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.CameraPositionState
@@ -62,6 +68,9 @@ import com.skyalt.canopy.tools.planning.BoundingCircle
 import com.skyalt.canopy.tools.planning.Coordinate
 import com.skyalt.canopy.tools.planning.ManualWindLayer
 import com.skyalt.canopy.tools.planning.MapGeometry
+import com.skyalt.canopy.tools.planning.PlanningSavedSettings
+import com.skyalt.canopy.tools.planning.SavedMapView
+import com.skyalt.canopy.tools.planning.SavedWind
 import com.skyalt.canopy.tools.planning.WindMath
 import com.skyalt.canopy.tools.planning.WindProfile
 import com.skyalt.canopy.tools.planning.WindProfileClient
@@ -75,6 +84,13 @@ import java.time.Instant
 
 fun Coordinate.latLng() = LatLng(latitude, longitude)
 fun LatLng.coordinate() = Coordinate(latitude, longitude)
+
+/** A saved map view as the map's camera: north-up rotation kept, never tilted. */
+val SavedMapView.cameraPosition: CameraPosition
+    get() = CameraPosition(center.latLng(), zoom, 0f, bearingDegrees)
+
+val CameraPosition.savedMapView: SavedMapView
+    get() = SavedMapView(target.coordinate(), zoom, bearing)
 
 /** Auto (forecast) or manually entered winds. */
 enum class WindSourceMode(val titleKey: String, val statusKey: String, val icon: ImageVector) {
@@ -207,6 +223,27 @@ class WindController(
         if (mode == WindSourceMode.MANUAL) applyManual()
     }
 
+    /** The wind setup to save: source, hour, manual terrain and layers. */
+    val saved: SavedWind get() = SavedWind(mode.name, forecastDate, manualTerrainFeet, manualLayers)
+
+    /**
+     * Puts back a saved setup without fetching anything; [resumeIfNeeded]
+     * fetches once the tool opens. A forecast hour that has passed becomes
+     * the current hour.
+     */
+    fun restore(saved: SavedWind) {
+        mode = WindSourceMode.entries.firstOrNull { it.name == saved.mode } ?: WindSourceMode.FORECAST
+        forecastDate = PlanningSavedSettings.forecastDate(saved.forecastDate)
+        manualTerrainFeet = saved.manualTerrainFeet
+        saved.manualLayers?.let { manualLayers = it }
+    }
+
+    /** Loads winds for a restored plan, unless they are already here or on the way. */
+    fun resumeIfNeeded() {
+        if (anchor() == null || profile != null || isLoading) return
+        refresh()
+    }
+
     /** Drops the current profile and loads winds for the anchor again. */
     fun reload() {
         profile = null
@@ -268,6 +305,27 @@ class WindController(
         errorKey = null
         isLoading = false
         onChange()
+    }
+}
+
+/**
+ * Keeps a planning tool's setup saved while its screen is open: when the
+ * map comes to rest, when the app goes to the background and when the tool
+ * closes, so the next launch opens where this one left off.
+ */
+@Composable
+fun SavesPlanningSettings(camera: CameraPositionState, save: () -> Unit) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(camera) {
+        snapshotFlow { camera.isMoving }.drop(1).collect { moving -> if (!moving) save() }
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) save() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            save()
+        }
     }
 }
 

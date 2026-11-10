@@ -234,6 +234,58 @@ object Glb {
 object Json {
     fun parse(text: String): Any? = Parser(text).run { val v = value(); ws(); v }
 
+    /** Maps, lists, strings, numbers, booleans and null as JSON; a number that is not finite becomes null. */
+    fun write(value: Any?): String = StringBuilder().also { write(value, it) }.toString()
+
+    private fun write(value: Any?, out: StringBuilder) {
+        when (value) {
+            null -> out.append("null")
+            is Boolean -> out.append(value)
+            is Number -> {
+                val d = value.toDouble()
+                if (!d.isFinite()) out.append("null")
+                else if (d == Math.rint(d) && kotlin.math.abs(d) < 1e15) out.append(d.toLong())
+                else out.append(d)
+            }
+            is String -> {
+                out.append('"')
+                for (c in value) when {
+                    c == '"' -> out.append("\\\"")
+                    c == '\\' -> out.append("\\\\")
+                    c == '\n' -> out.append("\\n")
+                    c == '\r' -> out.append("\\r")
+                    c == '\t' -> out.append("\\t")
+                    c < ' ' -> out.append(String.format("\\u%04x", c.code))
+                    else -> out.append(c)
+                }
+                out.append('"')
+            }
+            is Map<*, *> -> {
+                out.append('{')
+                var first = true
+                for ((k, v) in value) {
+                    if (!first) out.append(',')
+                    first = false
+                    write(k.toString(), out)
+                    out.append(':')
+                    write(v, out)
+                }
+                out.append('}')
+            }
+            is Iterable<*> -> {
+                out.append('[')
+                var first = true
+                for (v in value) {
+                    if (!first) out.append(',')
+                    first = false
+                    write(v, out)
+                }
+                out.append(']')
+            }
+            else -> write(value.toString(), out)
+        }
+    }
+
     private class Parser(val s: String) {
         var i = 0
 

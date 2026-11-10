@@ -146,6 +146,9 @@ object WindMath {
         return Integration(displacement, if (d > 0) listOf(LocalDisplacement.ZERO, displacement) else listOf(LocalDisplacement.ZERO))
     }
 
+    /** The height step of [passiveIntegration]: point `i` of its `cumulative` sits this many metres times `i` below the start. */
+    const val PASSIVE_ALTITUDE_STEP_METERS = 10.0
+
     /** Drift of a passive body sinking steadily, integrated down the column in 10 m steps. */
     fun passiveIntegration(altitudeAGLMeters: Double, minimumAltitudeAGLMeters: Double = 0.0, descentRateMetersPerSecond: Double, profile: WindProfile): Integration {
         val rate = max(descentRateMetersPerSecond, 0.1)
@@ -154,7 +157,7 @@ object WindMath {
         var displacement = LocalDisplacement.ZERO
         val cumulative = mutableListOf(LocalDisplacement.ZERO)
         while (alt > minAlt) {
-            val next = max(alt - 10.0, minAlt)
+            val next = max(alt - PASSIVE_ALTITUDE_STEP_METERS, minAlt)
             val dt = (alt - next) / rate
             val wind = profile.windAtAGL(alt).interpolated(profile.windAtAGL(next), 0.5)
             displacement += wind.displacement(dt)

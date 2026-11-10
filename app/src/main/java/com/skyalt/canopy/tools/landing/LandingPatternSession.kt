@@ -26,7 +26,15 @@ import com.skyalt.canopy.tools.planning.SwoopPatternSolution
 import com.skyalt.canopy.tools.planning.SwoopWaypoint
 import com.skyalt.canopy.tools.planning.WindMath
 import com.skyalt.canopy.tools.planning.WindProfileClient
+import androidx.compose.runtime.snapshotFlow
+import com.skyalt.canopy.tools.map.cameraPosition
+import com.skyalt.canopy.tools.map.savedMapView
+import com.skyalt.canopy.tools.planning.LandingPatternSettings
+import com.skyalt.canopy.tools.planning.PlanningSettingsStore
+import com.skyalt.canopy.tools.planning.SavedMapView
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -70,13 +78,26 @@ val SkillLevel.patternColor: Color
  * LandingPatternAssistantSession.swift. Kept for the life of the app so a
  * plan survives leaving and re-entering the tool.
  */
-class LandingPatternSession(client: WindProfileClient = WindProfileClient.live) {
+class LandingPatternSession(
+    client: WindProfileClient = WindProfileClient.live,
+    /** Where the setup is kept between launches; null starts empty and saves nothing. */
+    private val store: PlanningSettingsStore? = null,
+) {
     private val scope = MainScope()
+    private val saved = LandingPatternSettings.decode(store?.load(LandingPatternSettings.KEY))
 
     // Map
-    val camera = CameraPositionState(CameraPosition.fromLatLngZoom(DEFAULT_MAP_CENTER.latLng(), DEFAULT_MAP_ZOOM))
+    /** Opens where the map was left, or on a saved plan, before any GPS fix. */
+    val camera = CameraPositionState(
+        saved?.mapView?.cameraPosition
+            ?: (saved?.let { if (it.mode == LandingPatternMode.NORMAL) it.landingPoint else it.swoopStartPoint })
+                ?.let { CameraPosition.fromLatLngZoom(it.latLng(), DEFAULT_MAP_ZOOM) }
+            ?: CameraPosition.fromLatLngZoom(DEFAULT_MAP_CENTER.latLng(), DEFAULT_MAP_ZOOM),
+    )
     var cameraRequest by mutableStateOf<CameraRequest?>(null)
     var shouldCenterOnNextLocation = true
+    /** While the 3D view borrows the map to photograph the ground, the view to save instead of the borrowed one. */
+    var heldMapView: SavedMapView? = null
     var mapStyle by mutableStateOf(PlanningMapStyle.SATELLITE)
 
     // Mode
@@ -133,6 +154,77 @@ class LandingPatternSession(client: WindProfileClient = WindProfileClient.live) 
         recalculate(shouldFitMap = fitOnNextWind)
         fitOnNextWind = true
     }
+
+    /** A saved plan waits for the tool to open before its wind is fetched. */
+    private var needsSavedPlanResume = false
+    /** The first calculation of a restored plan keeps the saved map view. */
+    private var keepsMapOnNextCalculation = false
+
+    init {
+        // Set directly, so nothing is fetched or solved until the tool opens.
+        saved?.let { saved ->
+            mode = saved.mode
+            landingPoint = saved.landingPoint
+            finalHeadingDegrees = Geodesy.normalizedDegrees(saved.finalHeadingDegrees)
+            patternDirection = saved.patternDirection
+            altitudeStepFeet = min(max(saved.altitudeStepFeet, 300.0), 2_000.0)
+            hiddenLevels = saved.hiddenLevels
+            saved.swoopStartPoint?.let { start ->
+                swoopStartPoint = start
+                swoopStartAltitudeFeet = max(saved.swoopStartAltitudeFeet, 1.0)
+                swoopLandingPoint = saved.swoopLandingPoint ?: suggestedSwoopLandingPoint(start)
+                isSwoopLandingUserAdjusted = saved.isSwoopLandingUserAdjusted && saved.swoopLandingPoint != null
+                swoopWaypoints = saved.swoopWaypoints.map { SwoopWaypoint(coordinate = it) }
+            }
+            expertAirspeedKnots = min(max(saved.expertAirspeedKnots, 1.0), 80.0)
+            expertGlideRatio = min(max(saved.expertGlideRatio, 0.1), 10.0)
+            wind.restore(saved.wind)
+            mapStyle = PlanningMapStyle.entries.firstOrNull { it.name == saved.mapStyle } ?: PlanningMapStyle.SATELLITE
+            needsSavedPlanResume = windAnchor != null
+            if (saved.mapView != null || windAnchor != null) shouldCenterOnNextLocation = false
+            keepsMapOnNextCalculation = saved.mapView != null && needsSavedPlanResume
+        }
+        if (store != null) {
+            // Saved half a second after the last change; the screen also saves when it closes.
+            scope.launch {
+                snapshotFlow { currentSettings() }.drop(1).collectLatest {
+                    delay(500)
+                    store.save(LandingPatternSettings.KEY, it.encode())
+                }
+            }
+        }
+    }
+
+    /** Fetches the wind for a plan restored from the last launch; called when the tool opens. */
+    fun resumeSavedPlanIfNeeded() {
+        if (!needsSavedPlanResume) return
+        needsSavedPlanResume = false
+        wind.resumeIfNeeded()
+    }
+
+    /** Writes the setup now: when the map comes to rest and when the tool closes. */
+    fun saveSettings() {
+        store?.save(LandingPatternSettings.KEY, currentSettings().encode())
+    }
+
+    private fun currentSettings() = LandingPatternSettings(
+        mode = mode,
+        landingPoint = landingPoint,
+        finalHeadingDegrees = finalHeadingDegrees,
+        patternDirection = patternDirection,
+        altitudeStepFeet = altitudeStepFeet,
+        hiddenLevels = hiddenLevels,
+        swoopStartPoint = swoopStartPoint,
+        swoopStartAltitudeFeet = swoopStartAltitudeFeet,
+        swoopLandingPoint = swoopLandingPoint,
+        isSwoopLandingUserAdjusted = isSwoopLandingUserAdjusted,
+        swoopWaypoints = swoopWaypoints.map { it.coordinate },
+        expertAirspeedKnots = expertAirspeedKnots,
+        expertGlideRatio = expertGlideRatio,
+        wind = wind.saved,
+        mapStyle = mapStyle.name,
+        mapView = heldMapView ?: camera.position.savedMapView,
+    )
 
     // Derived state
 
@@ -350,6 +442,7 @@ class LandingPatternSession(client: WindProfileClient = WindProfileClient.live) 
     /** Debounced so a slide over a number solves once per burst. */
     private fun recalculate(shouldFitMap: Boolean = true) {
         if (wind.profile == null || !hasBasePoint) {
+            if (!wind.isLoading) keepsMapOnNextCalculation = false
             cancelPendingCalculation()
             envelopePreviewDegrees = null
             normalSolutions = emptyMap()
@@ -363,7 +456,9 @@ class LandingPatternSession(client: WindProfileClient = WindProfileClient.live) 
         }
     }
 
-    private fun performRecalculation(shouldFitMap: Boolean) {
+    private fun performRecalculation(requestedFit: Boolean) {
+        val shouldFitMap = requestedFit && !keepsMapOnNextCalculation
+        keepsMapOnNextCalculation = false
         val profile = wind.profile ?: run {
             normalSolutions = emptyMap(); swoopSolution = null; return
         }
