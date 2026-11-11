@@ -23,7 +23,7 @@ import kotlin.math.sqrt
 
 /**
  * The scene page's picture: the AFF exit, the student and two instructors
- * just out of the P750's door on jump run, its propeller turning. One
+ * just out of the P750XL's door on jump run, its propeller turning. One
  * finger turns the view round them, two fingers move it and a pinch zooms,
  * as SceneKit's camera control on iOS. Four quick taps open the aircraft's
  * markings and seven the hidden touchdown setting. Port of CanopyExitScene.swift.
@@ -163,14 +163,8 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
     private inner class ExitRenderer : Renderer {
         private lateinit var shader: SceneShader
         private lateinit var sky: SkyShader
-        private var body: List<GpuPart> = emptyList()
-        private var propeller: List<GpuPart> = emptyList()
+        private var aircraft = AircraftGpu()
         private var formation: List<GpuPart> = emptyList()
-        private var hub = com.skyalt.canopy.model.V3(0f, 0f, 0f)
-        private var builtLivery = 0
-        private var builtRegistration = ""
-        private var builtLogo: Bitmap? = null
-        private var builtPlacement = AircraftLogoPlacement()
         private var width = 1
         private var height = 1
         private var start = 0L
@@ -183,20 +177,10 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
             shader = SceneShader()
             sky = SkyShader()
-            buildAircraft()
+            // A new context: the old one's parts went with it.
+            aircraft = AircraftGpu()
             formation = GpuPart.of(Models.exitFormation())
             start = System.nanoTime()
-        }
-
-        private fun buildAircraft() {
-            builtLivery = liveryHex
-            builtRegistration = registration
-            builtLogo = logo
-            builtPlacement = logoPlacement
-            val aircraft = Models.aircraft(builtLivery, builtRegistration, builtLogo, builtPlacement)
-            body = GpuPart.of(aircraft.body)
-            propeller = GpuPart.of(aircraft.propeller)
-            hub = aircraft.hub
         }
 
         override fun onSurfaceChanged(gl: GL10?, w: Int, h: Int) {
@@ -204,11 +188,8 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
         }
 
         override fun onDrawFrame(gl: GL10?) {
-            if (builtLivery != liveryHex || builtRegistration != registration || builtLogo !== logo || builtPlacement != logoPlacement) {
-                body.forEach { it.release() }
-                propeller.forEach { it.release() }
-                buildAircraft()
-            }
+            // The P750XL once its model has loaded, in the markings as they are now.
+            val aircraftReady = aircraft.sync(liveryHex, registration, logo, logoPlacement)
             GLES30.glViewport(0, 0, width, height)
             GLES30.glClearColor(0.788f, 0.847f, 0.902f, 1f)
             GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
@@ -241,15 +222,24 @@ class ExitSceneView(context: Context) : GLSurfaceView(context) {
             GLES30.glEnable(GLES30.GL_DEPTH_TEST)
             GLES30.glDepthFunc(GLES30.GL_LEQUAL)
 
-            for (part in body) draw(part, null)
+            if (aircraftReady) {
+                for (part in aircraft.body) draw(part, null)
+                GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
+                GLES30.glPolygonOffset(-1f, -2f)
+                for (part in aircraft.decals) draw(part, null)
+                GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
+            }
             for (part in formation) draw(part, null)
-            // A turn every 0.12 s, as the iOS picture.
-            val seconds = (System.nanoTime() - start) / 1e9
-            val angle = ((seconds / 0.12) % 1.0 * 360).toFloat()
-            Matrix.setIdentityM(propellerModel, 0)
-            Matrix.translateM(propellerModel, 0, hub.x, hub.y, hub.z)
-            Matrix.rotateM(propellerModel, 0, angle, 0f, 0f, 1f)
-            for (part in propeller) draw(part, propellerModel)
+            if (aircraftReady) {
+                // A turn every 0.12 s, as the iOS picture.
+                val seconds = (System.nanoTime() - start) / 1e9
+                val angle = ((seconds / 0.12) % 1.0 * 360).toFloat()
+                val hub = aircraft.hub
+                Matrix.setIdentityM(propellerModel, 0)
+                Matrix.translateM(propellerModel, 0, hub.x, hub.y, hub.z)
+                Matrix.rotateM(propellerModel, 0, angle, 0f, 0f, 1f)
+                for (part in aircraft.propeller) draw(part, propellerModel)
+            }
         }
 
         private fun draw(part: GpuPart, parent: FloatArray?) {

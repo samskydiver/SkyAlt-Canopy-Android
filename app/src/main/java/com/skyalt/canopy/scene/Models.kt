@@ -6,24 +6,20 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.opengl.Matrix
-import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.model.AircraftLogoPlacement
-import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.Airfield
 import com.skyalt.canopy.model.V3
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.acos
-import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
-import kotlin.math.tan
 
-// The airfield, the P750, people, the other jumpers and the exit picture,
+// The airfield, the P750XL's parts, people, the other jumpers and the exit picture,
 // built as lists of parts the way the iOS scene builds SceneKit nodes. Port
 // of the model builders in CanopySceneController.swift and CanopyExitScene.swift.
 
@@ -156,173 +152,10 @@ object Shapes {
         }
         return MeshData(pos, nrm, idx)
     }
-
-    /**
-     * A surface through rings of equal point counts, each ring closed, every
-     * triangle turned to face away from its rings' centre; the ends are
-     * capped when [capped].
-     */
-    fun loft(rings: List<List<V3>>, capped: Boolean): MeshData? {
-        if (rings.size < 2) return null
-        val n = rings[0].size
-        if (n < 3 || rings.any { it.size != n }) return null
-        val vertices = ArrayList<V3>(rings.flatten())
-        val indices = ArrayList<Int>()
-        val centres = rings.map { ring -> ring.fold(V3.ZERO) { a, b -> a + b } / n.toFloat() }
-        fun triangle(a: Int, b: Int, c: Int, outward: V3) {
-            val normal = (vertices[b] - vertices[a]).cross(vertices[c] - vertices[a])
-            if (normal.dot(outward) >= 0) indices += listOf(a, b, c) else indices += listOf(a, c, b)
-        }
-        for (i in 1 until rings.size) {
-            val first = (i - 1) * n
-            val second = i * n
-            val centre = (centres[i - 1] + centres[i]) / 2f
-            for (k in 0 until n) {
-                val k2 = (k + 1) % n
-                val outward = vertices[first + k] - centre
-                triangle(first + k, second + k, second + k2, outward)
-                triangle(first + k, second + k2, first + k2, outward)
-            }
-        }
-        if (capped) {
-            for ((ring, neighbour) in listOf(0 to 1, rings.size - 1 to rings.size - 2)) {
-                val centre = vertices.size
-                vertices += centres[ring]
-                val outward = centres[ring] - centres[neighbour]
-                val base = ring * n
-                for (k in 0 until n) triangle(centre, base + k, base + (k + 1) % n, outward)
-            }
-        }
-        return mesh(vertices, indices)
-    }
-
-    /** A closed polygon in the x–y plane, extruded [depth] along z about z = 0, as SCNShape. */
-    fun extrude(points: List<Pair<Float, Float>>, depth: Float): MeshData {
-        val vertices = ArrayList<V3>(); val normals = ArrayList<V3>(); val indices = ArrayList<Int>()
-        val tris = earClip(points)
-        for ((z, nz) in listOf(depth / 2 to 1f, -depth / 2 to -1f)) {
-            val base = vertices.size
-            for ((x, y) in points) { vertices += V3(x, y, z); normals += V3(0f, 0f, nz) }
-            for (t in tris.chunked(3)) indices += if (nz > 0) listOf(base + t[0], base + t[1], base + t[2]) else listOf(base + t[0], base + t[2], base + t[1])
-        }
-        val count = points.size
-        for (i in 0 until count) {
-            val (x0, y0) = points[i]; val (x1, y1) = points[(i + 1) % count]
-            val edge = V3(x1 - x0, y1 - y0, 0f)
-            val normal = V3(edge.y, -edge.x, 0f).normalized()
-            val base = vertices.size
-            vertices += listOf(V3(x0, y0, depth / 2), V3(x1, y1, depth / 2), V3(x1, y1, -depth / 2), V3(x0, y0, -depth / 2))
-            repeat(4) { normals += normal }
-            indices += listOf(base, base + 1, base + 2, base, base + 2, base + 3)
-        }
-        return mesh(vertices, indices, normals)
-    }
-
-    /** Triangles of a simple polygon, by ear clipping. */
-    private fun earClip(points: List<Pair<Float, Float>>): List<Int> {
-        val n = points.size
-        var area = 0f
-        for (i in 0 until n) {
-            val (x0, y0) = points[i]; val (x1, y1) = points[(i + 1) % n]
-            area += x0 * y1 - x1 * y0
-        }
-        val ccw = area > 0
-        val remaining = (0 until n).toMutableList()
-        val out = ArrayList<Int>()
-        fun cross(a: Int, b: Int, c: Int): Float {
-            val (ax, ay) = points[a]; val (bx, by) = points[b]; val (cx, cy) = points[c]
-            return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
-        }
-        fun inside(p: Int, a: Int, b: Int, c: Int): Boolean {
-            val d1 = cross(a, b, p); val d2 = cross(b, c, p); val d3 = cross(c, a, p)
-            val neg = d1 < 0 || d2 < 0 || d3 < 0
-            val pos = d1 > 0 || d2 > 0 || d3 > 0
-            return !(neg && pos)
-        }
-        var guard = 0
-        while (remaining.size > 3 && guard < 1000) {
-            guard++
-            var clipped = false
-            for (i in remaining.indices) {
-                val a = remaining[(i + remaining.size - 1) % remaining.size]
-                val b = remaining[i]
-                val c = remaining[(i + 1) % remaining.size]
-                val turn = cross(a, b, c)
-                if (if (ccw) turn <= 0 else turn >= 0) continue
-                if (remaining.any { it != a && it != b && it != c && inside(it, a, b, c) }) continue
-                out += listOf(a, b, c)
-                remaining.removeAt(i)
-                clipped = true
-                break
-            }
-            if (!clipped) break
-        }
-        if (remaining.size == 3) out += remaining
-        return out
-    }
-
-    /**
-     * A closed ring around a rounded rectangle in the x–y plane at [z]: half
-     * sizes [w] and [h] about a centre [c] up, corners of radius [r].
-     */
-    fun roundedRing(z: Float, w: Float, h: Float, c: Float, r: Float, count: Int = 24): List<V3> {
-        val radius = min(r, min(w, h))
-        return (0 until count).map { k ->
-            val angle = 2 * PI.toFloat() * k / count
-            val s = sin(angle); val t = cos(angle)
-            V3((w - radius) * (if (t < 0) -1 else 1) + radius * t, c + (h - radius) * (if (s < 0) -1 else 1) + radius * s, z)
-        }
-    }
-
-    /**
-     * A closed ring around an aerofoil section at spanwise [x]: the chord runs
-     * from [leading] towards +z, [thickness] of the chord deep with a flatter
-     * underside, after the four-digit NACA thickness law.
-     */
-    fun aerofoilRing(x: Float, leading: V3, chord: Float, thickness: Float, count: Int = 20): List<V3> {
-        val half = count / 2
-        return (0 until count).map { k ->
-            val top = k < half
-            val u = if (top) k.toFloat() / half else (count - k).toFloat() / half
-            val t = aerofoilThickness(u, thickness)
-            V3(x, leading.y + (if (top) t else -0.55f * t) * chord, leading.z + u * chord)
-        }
-    }
 }
-
-/**
- * The half-depth of an aerofoil section [thickness] of the chord deep, as a
- * fraction of the chord, at [u] of the chord back from the leading edge:
- * the four-digit NACA thickness law.
- */
-fun aerofoilThickness(u: Float, thickness: Float) =
-    5 * thickness * (0.2969f * sqrt(u) - 0.1260f * u - 0.3516f * u * u + 0.2843f * u * u * u - 0.1036f * u * u * u * u)
-
-/** A station of the fuselage's loft: half width [w] and half height [h] about a centre [c] up, corners of radius [r], at [z] (+ towards the tail). */
-class FuselageSection(val z: Float, val w: Float, val h: Float, val c: Float, val r: Float)
 
 /** The models of the scenes. */
 object Models {
-    /** The P750's fuselage stations: round at the cowling, boxy through the cabin, tapering up to the tail. */
-    val FUSELAGE_SECTIONS = listOf(
-        FuselageSection(-5.55f, 0.33f, 0.33f, 0.06f, 0.30f),
-        FuselageSection(-5.0f, 0.50f, 0.48f, 0.06f, 0.40f),
-        FuselageSection(-4.2f, 0.64f, 0.58f, 0.04f, 0.42f),
-        FuselageSection(-3.5f, 0.74f, 0.62f, 0.02f, 0.36f),
-        FuselageSection(-2.7f, 0.83f, 0.88f, 0f, 0.28f),
-        FuselageSection(-1.2f, 0.84f, 0.88f, 0f, 0.26f),
-        FuselageSection(1.5f, 0.84f, 0.88f, 0f, 0.26f),
-        FuselageSection(2.8f, 0.62f, 0.64f, 0.18f, 0.26f),
-        FuselageSection(4.2f, 0.36f, 0.42f, 0.34f, 0.20f),
-        FuselageSection(5.5f, 0.14f, 0.22f, 0.46f, 0.10f),
-    )
-
-    /** The fin with its dorsal fillet in side view: z along the fuselage and y up, metres. */
-    val FIN_OUTLINE = listOf(2.6f to 0.8f, 3.8f to 1.1f, 4.95f to 2.25f, 5.55f to 2.25f, 5.6f to 0.6f, 4.0f to 0.74f)
-
-    /** How far the logo decals stand off the skin. */
-    private const val LOGO_STANDOFF = 0.015f
-
     const val ORANGE = 0xf07f1a
 
     private fun lineRuns(points: List<V3>) = floatArrayOf(*points.flatMap { listOf(it.x, it.y, it.z) }.toFloatArray())
@@ -453,202 +286,32 @@ object Models {
         return bitmap
     }
 
-    class Aircraft(val body: List<ModelPart>, val propeller: List<ModelPart>, val hub: V3)
+    /** The P750XL's airframe, the wings and tail with their control surfaces in [livery] (0xRRGGBB), the fuselage silver. */
+    fun aircraftBody(prepared: AircraftModel.Prepared, livery: Int): List<ModelPart> = prepared.body.map { piece ->
+        ModelPart(piece.mesh(), Xf().m, if (piece.paint == AircraftModel.Paint.LIVERY) rgba(livery) else piece.color)
+    }
 
-    /**
-     * The P750 after Pacific Aerospace's figures: a slab-sided cabin behind a
-     * long turboprop nose, a low wing with dihedral on the outer panels, a
-     * tall swept fin with a dorsal fillet, fixed tricycle gear and a
-     * three-bladed propeller. Nose to −z, the fuselage's centre at the origin.
-     * The wings and tail wear [livery] (0xRRGGBB); the fuselage stays white.
-     */
-    fun aircraft(
-        livery: Int = AircraftLiverySettings.DEFAULT_COLOR_HEX,
-        registration: String = AircraftMarkingsSettings.DEFAULT_REGISTRATION,
-        logo: Bitmap? = null,
-        logoPlacement: AircraftLogoPlacement = AircraftLogoPlacement(),
-    ): Aircraft {
-        val parts = ArrayList<ModelPart>()
-        val white = rgba(0xf4f4f4)
-        val paint = rgba(livery)
-        val glass = rgba(0x1a1f26)
-        val dark = rgba(0x30343a)
-        val rubber = rgba(0x15171a)
-        fun add(mesh: MeshData?, xf: Xf = Xf(), color: FloatArray, texture: Bitmap? = null) {
-            if (mesh != null) parts += ModelPart(mesh, xf.m, color, texture = texture)
-        }
-
-        // The fuselage, lofted through its stations.
-        add(Shapes.loft(FUSELAGE_SECTIONS.map { Shapes.roundedRing(it.z, it.w, it.h, it.c, it.r) }, capped = true), color = white)
-
-        // The low wing: 2.2 m chord, 15% thick at the root, the outer panels raised five degrees.
-        val dihedral = tan(5 * PI.toFloat() / 180)
-        fun wingRing(x: Float): List<V3> {
-            val outer = max(0f, abs(x) - 2.6f)
-            val tip = abs(x) > 6.35f
-            return Shapes.aerofoilRing(x, V3(0f, -0.78f + outer * dihedral, if (tip) -1.75f else -1.85f), if (tip) 2.0f else 2.2f, if (tip) 0.12f else 0.15f)
-        }
-        add(Shapes.loft(listOf(-6.4f, -2.6f, 2.6f, 6.4f).map(::wingRing), capped = true), color = paint)
-        // The tailplane on top of the tail cone, tapered and swept a little.
-        fun tailRing(x: Float): List<V3> {
-            val u = abs(x) / 2.48f
-            return Shapes.aerofoilRing(x, V3(0f, 0.7f, 4.55f + 0.3f * u), 1.25f - 0.35f * u, 0.1f)
-        }
-        add(Shapes.loft(listOf(-2.48f, 0f, 2.48f).map(::tailRing), capped = true), color = paint)
-        // The fin with its dorsal fillet, drawn in side view and turned to stand along the fuselage.
-        add(Shapes.extrude(FIN_OUTLINE, 0.14f), Xf().r(-PI.toFloat() / 2, 0f, 1f, 0f), paint)
-
-        // The registration in black: on both sides of the rear fuselage, under the left wing and on top of
-        // the right, with the tops of the letters towards the leading edge.
+    /** The registration patches on the rear fuselage and the wings, lettered [registration]. */
+    fun aircraftRegistration(prepared: AircraftModel.Prepared, registration: String): List<ModelPart> {
         val lettering = registrationImage(registration)
-        val taper = atan2(0.26f, 1.4f)
-        for (side in listOf(-1f, 1f)) {
-            add(Shapes.plane(1.0f, 0.39f), Xf().t(side * 0.502f, 0.28f, 3.502f).r(side * (PI.toFloat() / 2 - taper), 0f, 1f, 0f), rgba(0xffffff), lettering)
-        }
-        add(
-            Shapes.plane(2.4f, 0.94f),
-            Xf().t(-4.45f, -0.78f + 1.85f * dihedral - 0.12f, -0.75f)
-                .r(-5 * PI.toFloat() / 180, 0f, 0f, 1f).r(PI.toFloat(), 0f, 1f, 0f).r(PI.toFloat() / 2, 1f, 0f, 0f),
-            rgba(0xffffff), lettering,
-        )
-        // On the upper surface, just clear of the camber and tipped 4° nose-up to follow it down towards the trailing edge.
-        add(
-            Shapes.plane(2.4f, 0.94f),
-            Xf().t(4.45f, -0.78f + 1.85f * dihedral + 0.15f, -0.75f)
-                .r(5 * PI.toFloat() / 180, 0f, 0f, 1f).r(-PI.toFloat() / 2 + 4 * PI.toFloat() / 180, 1f, 0f, 0f),
-            rgba(0xffffff), lettering,
-        )
-        // The logo on both sides of the fuselage.
-        if (logo != null) {
-            for (side in listOf(-1f, 1f)) add(logoDecal(logo, logoPlacement, side), color = rgba(0xffffff), texture = logo)
-        }
-
-        // The windshield and the cabin windows (four a side, three on the left ahead of the jump door).
-        add(Primitives.box(1.55f, 0.5f, 0.06f), Xf().t(0f, 0.62f, -3.05f).r(0.55f, 1f, 0f, 0f), glass)
-        for (side in listOf(-1f, 1f)) {
-            val stations = if (side > 0) listOf(-2.05f, -1.2f, -0.35f, 0.5f) else listOf(-2.05f, -1.2f, -0.35f)
-            for (z in stations) add(Shapes.plane(0.6f, 0.48f), Xf().t(side * 0.85f, 0.32f, z).r(side * PI.toFloat() / 2, 0f, 1f, 0f), glass)
-        }
-        add(Shapes.plane(1.3f, 1.15f), Xf().t(-0.85f, -0.12f, 0.8f).r(-PI.toFloat() / 2, 0f, 1f, 0f), rgba(0x3a3f47))
-
-        // The spinner and the exhausts either side of the cowling.
-        add(Primitives.cone(0.04f, 0.3f, 0.55f), Xf().t(0f, 0.06f, -5.83f).r(-PI.toFloat() / 2, 1f, 0f, 0f), dark)
-        for (side in listOf(-1f, 1f)) {
-            add(Shapes.cylinder(0.09f, 0.5f), Xf().t(side * 0.6f, -0.1f, -4.55f).r(1.3f, 1f, 0f, 0f).r(side * 0.35f, 0f, 0f, 1f), dark)
-        }
-
-        // Fixed tricycle gear: the nose wheel under the engine and the main wheels on legs under the wings.
-        fun wheel(radius: Float, width: Float, at: V3) =
-            add(Shapes.cylinder(radius, width), Xf().t(at).r(PI.toFloat() / 2, 0f, 0f, 1f), rubber)
-        fun leg(top: V3, bottom: V3, radius: Float) {
-            val d = bottom - top
-            add(Shapes.cylinder(radius, d.length, 10), Xf().t((top + bottom) / 2f).align(V3(0f, 1f, 0f), d), dark)
-        }
-        wheel(0.26f, 0.18f, V3(0f, -1.34f, -4.1f))
-        leg(V3(0f, -0.5f, -4.1f), V3(0f, -1.34f, -4.1f), 0.06f)
-        for (side in listOf(-1f, 1f)) {
-            wheel(0.32f, 0.24f, V3(side * 1.59f, -1.28f, -0.9f))
-            leg(V3(side * 1.45f, -0.84f, -0.9f), V3(side * 1.59f, -1.28f, -0.9f), 0.07f)
-            add(Primitives.box(0.3f, 0.12f, 0.5f), Xf().t(side * 1.45f, -0.86f, -0.9f), dark)
-        }
-
-        // The three-bladed propeller, turning about the hub.
-        val propeller = ArrayList<ModelPart>()
-        val blade = Primitives.box(0.2f, 1.15f, 0.05f)
-        for (k in 0 until 3) {
-            propeller += ModelPart(
-                blade,
-                Xf().r(k * 2 * PI.toFloat() / 3, 0f, 0f, 1f).r(0.45f, 0f, 1f, 0f).t(0f, 0.77f, 0f).m,
-                dark,
-            )
-        }
-        return Aircraft(parts, propeller, V3(0f, 0.06f, -5.62f))
+        return prepared.registration.map { ModelPart(it.mesh(), Xf().m, rgba(0xffffff), texture = lettering) }
     }
 
-    /**
-     * A patch of the fuselage's skin on one side ([side] −1 left, +1 right),
-     * [LOGO_STANDOFF] out from it, carrying the picture: [placement]'s width
-     * along the fuselage and as tall as the picture's shape makes it,
-     * following the taper and the rounded corners, the picture reading the
-     * right way round from that side.
-     */
-    fun logoDecal(image: Bitmap, placement: AircraftLogoPlacement, side: Float): MeshData? {
-        val width = placement.width.toFloat()
-        if (image.width <= 0 || image.height <= 0 || width <= 0) return null
-        val height = width * image.height / image.width
-        val z0 = placement.along.toFloat() - width / 2
-        val z1 = placement.along.toFloat() + width / 2
-        val y0 = placement.height.toFloat() - height / 2
-        val y1 = placement.height.toFloat() + height / 2
-        // Columns at the ends, at every station between, and no more than 10 cm apart; rows no more than 5 cm apart.
-        val stations = (listOf(z0, z1) + FUSELAGE_SECTIONS.map { it.z }.filter { it > z0 && it < z1 }).sorted()
-        val columns = ArrayList<Float>()
-        for (i in 0 until stations.size - 1) {
-            val a = stations[i]; val b = stations[i + 1]
-            val steps = max(1, kotlin.math.ceil((b - a) / 0.1f).toInt())
-            for (k in 0 until steps) columns += a + (b - a) * k / steps
+    /** The logo on both sides of the fuselage at [placement], or nothing without one. */
+    fun aircraftLogo(logo: Bitmap?, placement: AircraftLogoPlacement): List<ModelPart> {
+        if (logo == null) return emptyList()
+        return listOf(-1f, 1f).mapNotNull { side ->
+            AircraftModel.logoDecal(logo.width, logo.height, placement, side)?.let { d ->
+                ModelPart(MeshData(d.positions, d.normals, d.indices, uvs = d.uvs), Xf().m, rgba(0xffffff), texture = logo)
+            }
         }
-        columns += z1
-        val rowCount = max(2, kotlin.math.ceil(height / 0.05f).toInt() + 1)
-        val rows = (0 until rowCount).map { y0 + (y1 - y0) * it / (rowCount - 1) }
-        val positions = FloatList(); val normals = FloatList(); val uvs = FloatList()
-        val vertices = ArrayList<V3>(); val vertexNormals = ArrayList<V3>()
-        for (z in columns) for (y in rows) {
-            val (point, normal) = fuselageSkin(z, y, side)
-            val v = point + normal * LOGO_STANDOFF
-            vertices += v; vertexNormals += normal
-            positions.add(v.x, v.y, v.z)
-            normals.add(normal.x, normal.y, normal.z)
-            uvs.add(if (side < 0) (z - z0) / width else (z1 - z) / width)
-            uvs.add((y1 - y) / height)
-        }
-        val indices = ArrayList<Int>()
-        fun triangle(i: Int, j: Int, k: Int) {
-            val n = (vertices[j] - vertices[i]).cross(vertices[k] - vertices[i])
-            indices += if (n.dot(vertexNormals[i]) >= 0) listOf(i, j, k) else listOf(i, k, j)
-        }
-        for (column in 0 until columns.size - 1) for (row in 0 until rowCount - 1) {
-            val a = column * rowCount + row
-            val b = a + rowCount
-            triangle(a, b, b + 1)
-            triangle(a, b + 1, a + 1)
-        }
-        return MeshData(positions.data.copyOf(positions.size), normals.data.copyOf(normals.size), indices.toIntArray(), uvs = uvs.data.copyOf(uvs.size))
     }
 
-    /**
-     * The point on the fuselage's skin at [z], [y] on the right (+1) or left
-     * (−1) side and the skin's outward normal there: the loft between the
-     * stations either side of [z], as [aircraft] builds it, with [y] held
-     * within the ring.
-     */
-    fun fuselageSkin(z: Float, y: Float, side: Float): Pair<V3, V3> {
-        val sections = FUSELAGE_SECTIONS
-        val zc = z.coerceIn(sections.first().z, sections.last().z)
-        var lower = sections.first()
-        var upper = sections.last()
-        for (i in 0 until sections.size - 1) {
-            if (zc >= sections[i].z && zc <= sections[i + 1].z) { lower = sections[i]; upper = sections[i + 1]; break }
-        }
-        val f = if (upper.z > lower.z) (zc - lower.z) / (upper.z - lower.z) else 0f
-        fun mix(a: Float, b: Float) = a + (b - a) * f
-        val centre = mix(lower.c, upper.c)
-        val half = mix(lower.h, upper.h)
-        val yc = y.coerceIn(centre - half * 0.98f, centre + half * 0.98f)
-        val ring = Shapes.roundedRing(zc, mix(lower.w, upper.w), half, centre, mix(lower.r, upper.r))
-        for (k in ring.indices) {
-            val a = ring[k]
-            val b = ring[(k + 1) % ring.size]
-            if ((a.x + b.x) * side <= 0 || abs(b.y - a.y) <= 1e-4f) continue
-            if (yc < min(a.y, b.y) - 1e-5f || yc > max(a.y, b.y) + 1e-5f) continue
-            val t = ((yc - a.y) / (b.y - a.y)).coerceIn(0f, 1f)
-            val point = a + (b - a) * t
-            var normal = V3(b.y - a.y, -(b.x - a.x), 0f)
-            if (normal.dot(V3(point.x, point.y - centre, 0f)) < 0) normal = normal * -1f
-            return point to (if (normal.length > 1e-6f) normal.normalized() else V3(side, 0f, 0f))
-        }
-        return V3(side * mix(lower.w, upper.w), yc, zc) to V3(side, 0f, 0f)
-    }
+    /** The blades about the hub ([AircraftModel.PROPELLER_HUB]), to be turned about its z axis. */
+    fun aircraftPropeller(prepared: AircraftModel.Prepared): List<ModelPart> =
+        prepared.blades.map { ModelPart(it.mesh(), Xf().m, it.color) }
+
+    private fun AircraftModel.Piece.mesh() = MeshData(positions, normals, indices, uvs = uvs)
 
     /** Someone standing: legs, a jacket and a head. */
     fun person(jacket: Int): List<ModelPart> = listOf(
@@ -672,7 +335,7 @@ object Models {
     // MARK: - The exit picture
 
     /** The centre of the jump door, in the aircraft's frame. */
-    val DOOR_CENTRE = V3(-0.85f, -0.12f, 0.8f)
+    val DOOR_CENTRE = AircraftModel.DOOR_CENTRE
     /** The student, 20 ft left, below and behind the door. */
     val STUDENT_OFFSET = DOOR_CENTRE + V3(-4.6f, -2.8f, 2.8f)
     /** The instructors' hips either side of the student's, in the student's frame. */

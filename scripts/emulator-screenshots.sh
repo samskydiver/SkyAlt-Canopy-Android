@@ -32,6 +32,11 @@ PY
   adb shell input tap $(cat /tmp/xy)
 }
 back() { adb shell input keyevent KEYCODE_BACK; sleep 1; }
+# Whether the screen shows this text, from a UI dump.
+has_ui() {
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  adb exec-out cat /sdcard/ui.xml | grep -q "$1"
+}
 # The tools, in portrait.
 adb shell settings put system accelerometer_rotation 0
 adb shell settings put system user_rotation 0
@@ -75,6 +80,16 @@ shot 01-settings 8
 # Screen size, to tap relative positions.
 read W H < <(adb shell wm size | tail -1 | sed -E 's/.* ([0-9]+)x([0-9]+).*/\2 \1/')
 echo "landscape ${W}x${H}"
+# The scene page's exit picture; four quick taps on it open the aircraft's markings and their side view.
+shot 01a-exit-picture 2
+adb shell "for i in 1 2 3 4; do input tap $((W * 3 / 4)) $((H / 2)) & sleep 0.15; done; wait"
+sleep 4
+if has_ui "pinch to size"; then
+  shot 01b-markings 1
+  back
+else
+  echo "no markings page"
+fi
 # Close the settings drawer by tapping the dimmed left side.
 adb shell input tap $((W / 5)) $((H / 2))
 shot 02-paused 2
@@ -132,5 +147,5 @@ if [ -f app/build/outputs/apk/release/app-release.apk ]; then
   done
   shot 12-paywall 2
 fi
-adb logcat -d -s AndroidRuntime:E CanopyGL:E '*:F' > screenshots/logcat.txt || true
+adb logcat -d -s AndroidRuntime:E CanopyGL:E AircraftSide:E AircraftModel:E '*:F' > screenshots/logcat.txt || true
 adb logcat -d > screenshots/logcat-full.txt || true

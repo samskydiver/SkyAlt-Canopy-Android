@@ -128,6 +128,8 @@ class SimulatorActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         com.skyalt.canopy.scene.CanopyModelFiles.init(this)
+        // The jump plane is read in the background, ready for the scene page and the scenes.
+        com.skyalt.canopy.scene.CanopyModelFiles.preloadAircraft()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
