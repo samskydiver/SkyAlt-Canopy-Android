@@ -44,6 +44,8 @@ has_ui() {
   dump_ui
   grep -q "$1" /tmp/ui.xml
 }
+# Keeps the screen's tree when words were not found on it, under their name.
+keep_ui() { cp /tmp/ui.xml "screenshots/no-$(echo "$1" | tr -cs 'A-Za-z0-9\n' '-').xml"; }
 # Whether the screen shows these words, whatever their case.
 has_like() {
   dump_ui
@@ -56,12 +58,13 @@ wait_like() {
     sleep 2
   done
   echo "no $1 on the screen"
+  keep_ui "$1"
   return 1
 }
 # Taps the element whose text or description is these words, whatever their case, or else holds them.
 tap_like() {
   dump_ui
-  python3 - "$1" <<'PY' > /tmp/xy || { echo "nothing like $1"; cp /tmp/ui.xml "screenshots/no-$(echo "$1" | tr ' ' '-').xml"; return 1; }
+  python3 - "$1" <<'PY' > /tmp/xy || { echo "nothing like $1"; keep_ui "$1"; return 1; }
 import re, sys
 xml = open('/tmp/ui.xml', encoding='utf-8', errors='ignore').read()
 want = sys.argv[1].lower()
@@ -164,11 +167,12 @@ else
   echo "no markings page"
 fi
 # The first scene, at the shared airfield: the runway with its paint, the taxiways and the landing area lie on the
-# ground, the hangar and the landing aircraft stand on them. It opens with its settings; a tap on the dimmed left
+# ground, the hangar and the landing aircraft stand on them. It opens with its settings, which name the scene
+# with its number (the buttons under them are not in the screen's tree meanwhile); a tap on the dimmed left
 # side closes them.
 wait_like "Choose a scene" 5
 tap_like "Landing with the aircraft" || echo "no scene row"
-wait_like "Flight setup" 10
+wait_like "1 · Landing with the aircraft" 10
 adb shell input tap $((W / 5)) $((H / 2))
 shot 02-paused 2
 # Start the run.
