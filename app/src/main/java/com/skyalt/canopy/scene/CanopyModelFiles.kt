@@ -36,8 +36,13 @@ object CanopyModelFiles {
         }
     }
 
-    /** A new rig of the series, to fly or to show; each one keeps its own shape. */
-    fun rig(model: CanopyModel): CanopyModelRig? = model(model)?.let { CanopyModelRig.build(it, model.key) }
+    /** A new rig of the series, to fly or to show; each one keeps its own shape. Null when its file cannot be read or holds no canopy. */
+    fun rig(model: CanopyModel): CanopyModelRig? {
+        val parsed = model(model) ?: return null
+        val rig = CanopyModelRig.build(parsed, model.key)
+        if (rig == null) Log.e("CanopyModel", "no canopy to fly in ${model.modelAsset}")
+        return rig
+    }
 
     @Volatile private var aircraftModel: AircraftModel.Prepared? = null
     private var aircraftFailed = false

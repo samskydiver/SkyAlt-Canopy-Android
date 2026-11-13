@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.Matrix
+import android.util.Log
 import com.skyalt.canopy.model.AircraftLiverySettings
 import com.skyalt.canopy.model.AircraftMarkingsSettings
 import com.skyalt.canopy.model.AeroParameters
@@ -85,9 +86,8 @@ class SceneController {
     /** The chosen series' own model; see [setCanopy]. */
     private var canopyRig: GpuRig? = null
     private var canopyRigScale = 1f
-    /** Counts the requests, so a slow load for a canopy no longer chosen is dropped. */
-    private var canopyGeneration = 0
-    @Volatile private var pendingRig: Pair<Int, CanopyModelRig>? = null
+    /** The series asked for, and its model on the way here from the thread that reads it. */
+    private val canopyRequests = CanopyRigRequests()
     private val canopyRigModel = FloatArray(16)
     private var jumperAlpha = 1f
 
@@ -273,28 +273,33 @@ class SceneController {
      * Flies the series' own model at the size chosen, scaled by the square
      * root of the area ratio about the harness, lines and all. The model
      * is built off the GL thread from the bundled file; until it is ready
-     * the previous one keeps flying.
+     * the previous one keeps flying. Asked for again while it is being
+     * read (every start asks twice), the series is still read only once.
+     * GL thread.
      */
     fun setCanopy(model: CanopyModel, areaSquareFeet: Double) {
-        canopyGeneration += 1
-        val generation = canopyGeneration
         canopyRigScale = sqrt(max(1.0, areaSquareFeet) / model.modelSize).toFloat()
-        if (canopyRig?.rig?.key == model.key) return
+        if (!canopyRequests.want(model.key, hung = canopyRig?.rig?.key)) return
         Thread {
-            CanopyModelFiles.rig(model)?.let { pendingRig = generation to it }
+            var rig: CanopyModelRig? = null
+            try {
+                rig = CanopyModelFiles.rig(model)
+            } finally {
+                canopyRequests.read(model.key, rig)
+            }
         }.apply { name = "canopy-model"; start() }
     }
 
     private fun applyPendingRig() {
-        val pending = pendingRig ?: return
-        pendingRig = null
-        if (pending.first == canopyGeneration) installCanopyRig(pending.second)
+        val rig = canopyRequests.take() ?: return
+        if (rig.key != canopyRig?.rig?.key) installCanopyRig(rig)
     }
 
     /** Hangs the model from the jumper's shoulders in place of the last. */
     private fun installCanopyRig(rig: CanopyModelRig) {
         canopyRig?.release()
         canopyRig = GpuRig(rig)
+        Log.i("CanopyModel", "flying ${rig.key}")
     }
 
     private fun updateCanopy(dL: Double, dR: Double, stall: Double, collapse: Double) {
