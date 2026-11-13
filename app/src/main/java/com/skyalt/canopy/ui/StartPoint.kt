@@ -1,7 +1,6 @@
 package com.skyalt.canopy.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -34,7 +32,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -43,7 +40,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -139,24 +135,14 @@ fun StartPointScreen(state: UiState, engine: SimulatorEngine, onDone: () -> Unit
                 },
         ) {
             val image = state.dropzoneImage
-            if (image != null && ppm > 0) {
-                val dz = state.dropzone
-                val widthPx = dz.widthMeters.toFloat() * ppm
-                val heightPx = widthPx * image.height / max(1, image.width)
-                val at = screen(dz.eastOffsetMeters, dz.southOffsetMeters)
-                val bitmap = remember(image) { image.asImageBitmap() }
-                Image(
-                    bitmap, null,
-                    contentScale = ContentScale.FillBounds,
-                    modifier = Modifier
-                        .offset { IntOffset((at.x - widthPx / 2).roundToInt(), (at.y - heightPx / 2).roundToInt()) }
-                        .requiredSize(with(density) { widthPx.toDp() }, with(density) { heightPx.toDp() })
-                        .rotate(-dz.rotationDegrees.toFloat()),
-                )
-            }
+            val picture = remember(image) { image?.asImageBitmap() }
             val start = state.startPlacement
             Canvas(Modifier.fillMaxSize()) {
                 if (ppm <= 0) return@Canvas
+                if (picture != null) {
+                    val dz = state.dropzone
+                    drawDropzonePicture(picture, screen(dz.eastOffsetMeters, dz.southOffsetMeters), dz.widthMeters.toFloat() * ppm, dz.rotationDegrees)
+                }
                 val target = screen(0.0, 0.0)
                 state.referencePattern?.let { pattern ->
                     val style = state.pathStyle.patternGround

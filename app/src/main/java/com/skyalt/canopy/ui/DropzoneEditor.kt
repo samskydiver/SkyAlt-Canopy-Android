@@ -1,7 +1,6 @@
 package com.skyalt.canopy.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -12,7 +11,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
@@ -30,17 +28,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.skyalt.canopy.sim.SimulatorEngine
@@ -77,6 +72,7 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Bo
     val density = LocalDensity.current
     var ppm by remember { mutableStateOf(0f) }
     var measuring by remember { mutableStateOf(false) }
+    // Measure points as fractions of the picture's width from its centre, so they stay on it at any zoom.
     val points = remember { mutableStateListOf<Offset>() }
     var realDistance by remember { mutableStateOf(0.0) }
     var placingRunway by remember { mutableStateOf(false) }
@@ -96,22 +92,25 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Bo
         if (ppm == 0f) ppm = (w * 0.7f / max(state.dropzone.widthMeters.toFloat(), 100f))
         val centre = Offset(w / 2 - with(density) { 130.dp.toPx() }, h / 2)
         val dz = state.dropzone
-        val widthPx = dz.widthMeters.toFloat() * ppm
-        val heightPx = if (image != null) widthPx * image.height / max(1, image.width) else widthPx
-        val at = Offset(centre.x + dz.eastOffsetMeters.toFloat() * ppm, centre.y + dz.southOffsetMeters.toFloat() * ppm)
-        val bitmap = remember(image) { image?.asImageBitmap() }
-        val frame = PictureFrame(at, widthPx, dz.rotationDegrees)
+        val picture = remember(image) { image?.asImageBitmap() }
+        // One frame places the picture, the runway and the measure points on screen.
+        fun frameOf(d: DropzoneSettings) = PictureFrame(
+            Offset(centre.x + d.eastOffsetMeters.toFloat() * ppm, centre.y + d.southOffsetMeters.toFloat() * ppm),
+            d.widthMeters.toFloat() * ppm,
+            d.rotationDegrees,
+        )
+        val frame = frameOf(dz)
         val latestDz by rememberUpdatedState(dz)
 
         Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(measuring, placingRunway, ppm) {
+                .pointerInput(measuring, placingRunway, ppm, centre) {
                     if (placingRunway) {
                         detectDragGestures(
                             onDragStart = begin@{ start ->
                                 val runway = latestDz.runway ?: return@begin
-                                val f = latestDz.let { PictureFrame(Offset(centre.x + it.eastOffsetMeters.toFloat() * ppm, centre.y + it.southOffsetMeters.toFloat() * ppm), it.widthMeters.toFloat() * ppm, it.rotationDegrees) }
+                                val f = frameOf(latestDz)
                                 runwayDrag = RunwayDrag(runwayHandle(start, runway, f), runway, f.fraction(start))
                             },
                             onDragEnd = { runwayDrag = null },
@@ -119,22 +118,22 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Bo
                         ) move@{ change, _ ->
                             val drag = runwayDrag ?: return@move
                             val d = latestDz
-                            val f = PictureFrame(Offset(centre.x + d.eastOffsetMeters.toFloat() * ppm, centre.y + d.southOffsetMeters.toFloat() * ppm), d.widthMeters.toFloat() * ppm, d.rotationDegrees)
-                            val moved = runwayMoved(drag, f.fraction(change.position), d.widthMeters)
+                            val moved = runwayMoved(drag, frameOf(d).fraction(change.position), d.widthMeters)
                             engine.updateDropzone { it.copy(runway = moved) }
                         }
                     } else if (measuring) {
                         detectTapGestures { point ->
                             if (points.size >= 2) points.clear()
-                            points.add(point)
+                            points.add(frameOf(latestDz).fraction(point))
                         }
                     } else {
                         detectTransformGestures { _, pan, zoom, rotation ->
                             engine.updateDropzone { d ->
-                                d.copy(
-                                    widthMeters = d.widthMeters * zoom,
-                                    eastOffsetMeters = d.eastOffsetMeters + pan.x / ppm,
-                                    southOffsetMeters = d.southOffsetMeters + pan.y / ppm,
+                                // Sized about the target, so what lies under the rings stays under them.
+                                val sized = d.resized(d.widthMeters * zoom)
+                                sized.copy(
+                                    eastOffsetMeters = sized.eastOffsetMeters + pan.x / ppm,
+                                    southOffsetMeters = sized.southOffsetMeters + pan.y / ppm,
                                     // Compose turns clockwise; the setting is counter-clockwise.
                                     rotationDegrees = d.rotationDegrees - rotation,
                                 )
@@ -143,17 +142,12 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Bo
                     }
                 },
         ) {
-            if (bitmap != null) Image(
-                bitmap, null,
-                contentScale = ContentScale.FillBounds,
-                modifier = Modifier
-                    .offset { IntOffset((at.x - widthPx / 2).roundToInt(), (at.y - heightPx / 2).roundToInt()) }
-                    .requiredSize(with(density) { widthPx.toDp() }, with(density) { heightPx.toDp() })
-                    .rotate(-dz.rotationDegrees.toFloat()),
-            )
             Canvas(Modifier.fillMaxSize()) {
+                // The picture in the canvas the rings and the runway are drawn in, through the same frame.
+                if (picture != null) drawDropzonePicture(picture, frame.at, frame.widthPx, dz.rotationDegrees)
+                // The target as it lies on the ground: 5 m bands out to 20 m.
                 for ((outer, hexColor) in listOf(20f to 0xf4f4f0, 15f to 0xe4582b, 10f to 0xf4f4f0, 5f to 0xe4582b)) {
-                    drawCircle(hex(hexColor, 0.55f), outer * ppm, centre, style = Stroke(max(1.5f, 5f * ppm)))
+                    drawCircle(hex(hexColor, 0.55f), (outer - 2.5f) * ppm, centre, style = Stroke(max(1.5f, 5f * ppm)))
                 }
                 drawLine(Color.White, centre - Offset(16.dp.toPx(), 0f), centre + Offset(16.dp.toPx(), 0f), 1.5.dp.toPx())
                 drawLine(Color.White, centre - Offset(0f, 16.dp.toPx()), centre + Offset(0f, 16.dp.toPx()), 1.5.dp.toPx())
@@ -184,11 +178,12 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Bo
                     }
                 }
                 if (measuring) {
-                    for (pt in points) {
+                    val marks = points.map { frame.screen(it) }
+                    for (pt in marks) {
                         drawCircle(hex(0xffd23f), 7.dp.toPx(), pt)
                         drawCircle(Color.Black, 7.dp.toPx(), pt, style = Stroke(1.5.dp.toPx()))
                     }
-                    if (points.size == 2) drawLine(hex(0xffd23f), points[0], points[1], 2.dp.toPx())
+                    if (marks.size == 2) drawLine(hex(0xffd23f), marks[0], marks[1], 2.dp.toPx())
                 }
             }
             // North is straight up in this view, as in the 3D scene and the start-point map.
@@ -239,16 +234,12 @@ fun DropzoneEditor(state: UiState, engine: SimulatorEngine, startsWithRunway: Bo
                 if (points.size < 2) {
                     Note(s("Tap two points a known distance apart"))
                 } else {
-                    val pixels = (points[1] - points[0]).getDistance()
-                    val measured = pixels / ppm
-                    FieldLabel(s("Measured"), "${state.units.distanceText(measured.toDouble())} ${state.units.distanceSymbol}")
+                    val measured = (points[1] - points[0]).getDistance() * dz.widthMeters
+                    FieldLabel(s("Measured"), "${state.units.distanceText(measured)} ${state.units.distanceSymbol}")
                     NumberField(s("Actual distance"), state.units.distanceSymbol, realDistance, { realDistance = it }, 0)
                     ChipButton(s("Apply scale"), style = ChipStyle.PRIMARY, fillsWidth = true, isDisabled = realDistance <= 0) {
                         val real = state.units.meters(realDistance)
-                        val ratio = real / max(measured.toDouble(), 0.01)
-                        engine.updateDropzone { d ->
-                            d.copy(widthMeters = d.widthMeters * ratio, eastOffsetMeters = d.eastOffsetMeters * ratio, southOffsetMeters = d.southOffsetMeters * ratio)
-                        }
+                        engine.updateDropzone { d -> d.resized(d.widthMeters * real / max(measured, 0.01)) }
                         points.clear()
                         measuring = false
                     }

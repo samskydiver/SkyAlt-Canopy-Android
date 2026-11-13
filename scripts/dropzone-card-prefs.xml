@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="dropzone">{&quot;widthMeters&quot;:400.0,&quot;eastOffsetMeters&quot;:30.0,&quot;southOffsetMeters&quot;:-20.0,&quot;rotationDegrees&quot;:20.0,&quot;runway&quot;:{&quot;centreX&quot;:0.1,&quot;centreY&quot;:0.18,&quot;length&quot;:0.45,&quot;width&quot;:0.075,&quot;angleDegrees&quot;:-35.0}}</string>
+    <string name="configuration">{&quot;startEastMeters&quot;:0.0,&quot;startSouthMeters&quot;:0.0,&quot;startAltitudeMeters&quot;:150.0,&quot;windSpeed&quot;:0.0}</string>
+</map>
