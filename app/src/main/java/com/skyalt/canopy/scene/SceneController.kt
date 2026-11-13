@@ -178,8 +178,8 @@ class SceneController {
 
     // The scenes' airfield, the aircraft and the people on the ground
     private var airfieldVisible = false
-    private var airfieldFlats: List<GpuPart>? = null
-    private var airfieldSolids: List<GpuPart>? = null
+    private class AirfieldGpu(val ground: List<GpuPart>, val paint: List<GpuPart>, val solids: List<GpuPart>)
+    private var airfield: AirfieldGpu? = null
     private var aircraftVisible = false
     private var aircraftLivery = AircraftLiverySettings.DEFAULT_COLOR_HEX
     private var aircraftMarkings = AircraftMarkingsSettings()
@@ -217,7 +217,7 @@ class SceneController {
     fun onSurfaceCreated() {
         shader = SceneShader()
         sky = SkyShader()
-        groundMesh = GpuMesh().apply { set(Primitives.groundPlane(10_000f, 10_000f)) }
+        groundMesh = GpuMesh().apply { set(Primitives.groundGrid(GROUND_SIZE, GROUND_CELLS)) }
         groundTexture = Textures.upload(groundBitmap(), repeat = true, mipmap = true)
         ringMeshes = listOf(
             Triple(0f, 5f, 0xe4582b), Triple(5f, 10f, 0xf4f4f0), Triple(10f, 15f, 0xe4582b), Triple(15f, 20f, 0xf4f4f0),
@@ -249,7 +249,7 @@ class SceneController {
         // GL objects of the lost context are gone with it; they are built again on use.
         cloudMesh = null; cloudTextures = intArrayOf(0, 0); cloudTextureDensity = -1.0
         wakeMesh = null
-        airfieldFlats = null; airfieldSolids = null
+        airfield = null
         aircraftParts = AircraftGpu()
         personParts = null
         trafficVariants.clear(); trafficJumpers = null
@@ -703,25 +703,37 @@ class SceneController {
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthFunc(GLES30.GL_LEQUAL)
 
-        // Ground, then the flat things on it pulled forward in depth.
+        // The ground.
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, groundTexture)
         draw(groundMesh, identity, GROUND_WHITE, lit = true, texture = true, uvScale = 200f)
-        GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
-        if (airfieldVisible) {
-            GLES30.glPolygonOffset(-1f, -2f)
-            for (part in airfieldFlats ?: GpuPart.of(Models.airfield().first).also { airfieldFlats = it }) drawPart(part)
-        }
-        dropzoneMesh?.takeIf { !airfieldVisible }?.let {
-            GLES30.glPolygonOffset(-1f, -2f)
+
+        // What lies flat on it, each painted over the last with no depth
+        // test and no depth of its own. These are centimetres above the
+        // ground and each other, less than the depth buffer tells apart
+        // from flying height once a GPU has placed rectangles this large:
+        // with the test on, the dropzone picture came and went from frame
+        // to frame. Nothing is under the ground for them to cover wrongly,
+        // and everything that stands on it is drawn after them.
+        GLES30.glDisable(GLES30.GL_DEPTH_TEST)
+        val field = if (airfieldVisible) airfieldParts() else null
+        if (field != null) for (part in field.ground) drawPart(part)
+        dropzoneMesh?.takeIf { field == null }?.let {
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, dropzoneTexture)
             draw(it, dropzoneModel, WHITE, lit = false, texture = true)
         }
-        GLES30.glPolygonOffset(-2f, -4f)
         val ringModel = FloatArray(16).also { Matrix.setIdentityM(it, 0); Matrix.translateM(it, 0, 0f, 0.2f, 0f) }
         for ((mesh, hex) in ringMeshes) draw(mesh, ringModel, CanopyMeshBuilder.rgb(hex), lit = false)
         val dropModel = FloatArray(16).also { Matrix.setIdentityM(it, 0); Matrix.translateM(it, 0, dropPosition[0], dropPosition[1], dropPosition[2]) }
         draw(dropRingMesh, dropModel, floatArrayOf(0.055f, 0.102f, 0.157f, 0.45f), lit = false)
+        GLES30.glEnable(GLES30.GL_DEPTH_TEST)
+
+        // The runway's paint and the pattern: lines with a thickness, pulled forward in depth.
+        GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
+        if (field != null) {
+            GLES30.glPolygonOffset(-1f, -2f)
+            for (part in field.paint) drawPart(part)
+        }
         GLES30.glPolygonOffset(-3f, -6f)
         if (showsPaths) for (part in patternParts) draw(part.mesh, part.model, part.color, part.lit)
         GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
@@ -893,10 +905,13 @@ class SceneController {
         peoplePositions = positions
     }
 
+    /** The airfield on the GPU, built on first use. */
+    private fun airfieldParts(): AirfieldGpu = airfield ?: Models.airfield().let {
+        AirfieldGpu(GpuPart.of(it.ground), GpuPart.of(it.paint), GpuPart.of(it.solids))
+    }.also { airfield = it }
+
     private fun drawAirfieldAndCrowd() {
-        if (airfieldVisible) {
-            for (part in airfieldSolids ?: GpuPart.of(Models.airfield().second).also { airfieldSolids = it }) drawPart(part)
-        }
+        if (airfieldVisible) for (part in airfieldParts().solids) drawPart(part)
         if (peoplePositions.isNotEmpty()) {
             val kinds = personParts ?: listOf(GpuPart.of(Models.person(0xe4582b)), GpuPart.of(Models.person(0xf2c12e))).also { personParts = it }
             val root = FloatArray(16)
@@ -1083,6 +1098,9 @@ class SceneController {
         const val WINDSOCK_LENGTH = 10.0
         const val WINDSOCK_MOUTH = 1.4
         const val WINDSOCK_FULL_SPEED = 7.7
+        /** The ground: ten kilometres square, in squares of 100 m (see [Primitives.groundGrid]). */
+        private const val GROUND_SIZE = 10_000f
+        private const val GROUND_CELLS = 100
         private const val UPPER_ARM = 0.3f
         private const val FOREARM = 0.3f
         private val SHOULDER_LEFT = floatArrayOf(-0.2f, 0.2f, 0f)
