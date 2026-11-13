@@ -134,6 +134,39 @@ object Primitives {
         )
     }
 
+    /**
+     * A square in the x-z plane, facing up, cut into [cells] by [cells]
+     * squares, with texture coordinates 0…1 across the whole of it. For the
+     * ground: as one rectangle its two triangles reach kilometres past the
+     * screen and behind the eye, and a GPU, working in single precision,
+     * then places them coarsely in depth. On a phone that was enough for
+     * what lay centimetres above the ground to flicker; a model of the
+     * arithmetic puts the rectangle six to thirty depth steps off in a
+     * typical view and hundreds in some, squares of 100 m at most three
+     * from 90 m up.
+     */
+    fun groundGrid(size: Float, cells: Int): MeshData {
+        val side = cells + 1
+        val positions = FloatArray(side * side * 3)
+        val normals = FloatArray(side * side * 3)
+        val uvs = FloatArray(side * side * 2)
+        for (j in 0 until side) for (i in 0 until side) {
+            val k = j * side + i
+            val u = i.toFloat() / cells; val v = j.toFloat() / cells
+            positions[k * 3] = (u - 0.5f) * size; positions[k * 3 + 2] = (v - 0.5f) * size
+            normals[k * 3 + 1] = 1f
+            uvs[k * 2] = u; uvs[k * 2 + 1] = v
+        }
+        val indices = IntArray(cells * cells * 6)
+        var next = 0
+        for (j in 0 until cells) for (i in 0 until cells) {
+            // The square's corners in the order of [groundPlane]'s, and its two triangles wound alike.
+            val a = j * side + i; val b = a + 1; val c = b + side; val d = a + side
+            for (corner in intArrayOf(a, c, b, a, d, c)) indices[next++] = corner
+        }
+        return MeshData(positions, normals, indices, uvs = uvs)
+    }
+
     /** A unit quad in x-y (−0.5…0.5), for billboards. */
     fun billboardQuad(aspect: Float): MeshData {
         val x = 0.5f; val y = 0.5f / aspect
@@ -198,6 +231,23 @@ object Primitives {
         }
         if (idx.isEmpty()) return null
         return MeshData(p.data.copyOf(p.size), n.data.copyOf(n.size), idx.toIntArray(), c?.let { it.data.copyOf(it.size) })
+    }
+
+    /**
+     * A straight run from one point to another as points no more than
+     * [step] apart, so that [tubes] makes it of short pieces: one piece a
+     * kilometre long is placed in depth as coarsely as the ground's two
+     * triangles were (see [groundGrid]).
+     */
+    fun straightRun(from: FloatArray, to: FloatArray, step: Float): FloatArray {
+        val dx = to[0] - from[0]; val dy = to[1] - from[1]; val dz = to[2] - from[2]
+        val pieces = max(1, kotlin.math.ceil(sqrt(dx * dx + dy * dy + dz * dz) / step).toInt())
+        val points = FloatArray((pieces + 1) * 3)
+        for (i in 0..pieces) {
+            val t = i.toFloat() / pieces
+            points[i * 3] = from[0] + dx * t; points[i * 3 + 1] = from[1] + dy * t; points[i * 3 + 2] = from[2] + dz * t
+        }
+        return points
     }
 
     /** Breaks a polyline into dashes, each a two-point run. */

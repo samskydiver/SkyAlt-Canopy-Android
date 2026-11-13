@@ -164,12 +164,19 @@ object Models {
     private fun flat(width: Double, length: Double, hex: Int, x: Double, z: Double, height: Float) =
         ModelPart(Primitives.groundPlane(width.toFloat(), length.toFloat()), Xf().t(x.toFloat(), height, z.toFloat()).m, rgba(hex), lit = true)
 
-    /**
-     * The airfield's flat parts (runway with its paint, apron, taxiways and
-     * grass), drawn pulled forward in depth, and its hangar.
-     */
-    fun airfield(): Pair<List<ModelPart>, List<ModelPart>> {
+    /** The airfield's parts by the way they are drawn. */
+    class AirfieldParts(
+        /** Flat on the ground, in the order they are painted over it: the landing area, the apron, the taxiways, the runway. */
+        val ground: List<ModelPart>,
+        /** The runway's centreline, edges and threshold bars: lines with a thickness, standing a little proud of it. */
+        val paint: List<ModelPart>,
+        /** The hangar. */
+        val solids: List<ModelPart>,
+    )
+
+    fun airfield(): AirfieldParts {
         val flats = ArrayList<ModelPart>()
+        val lines = ArrayList<ModelPart>()
         val solids = ArrayList<ModelPart>()
         val runwayZ = Airfield.RUNWAY_CENTRE_Z
         val runwayLength = Airfield.RUNWAY_EAST_X - Airfield.RUNWAY_WEST_X
@@ -195,17 +202,18 @@ object Models {
         val halfWidth = (Airfield.RUNWAY_WIDTH / 2).toFloat()
         Primitives.tubes(
             Primitives.dashedRuns(floatArrayOf(west + 60, 0.14f, rz, east - 60, 0.14f, rz), 30f, 20f), 0.45f,
-        )?.let { flats += ModelPart(it, Xf().m, paint, lit = false) }
+        )?.let { lines += ModelPart(it, Xf().m, paint, lit = false) }
         val edges = listOf(-1f, 1f).map { side ->
-            floatArrayOf(west, 0.14f, rz + side * (halfWidth - 1), east, 0.14f, rz + side * (halfWidth - 1))
+            val z = rz + side * (halfWidth - 1)
+            Primitives.straightRun(floatArrayOf(west, 0.14f, z), floatArrayOf(east, 0.14f, z), 100f)
         }
-        Primitives.tubes(edges, 0.3f)?.let { flats += ModelPart(it, Xf().m, paint, lit = false) }
+        Primitives.tubes(edges, 0.3f)?.let { lines += ModelPart(it, Xf().m, paint, lit = false) }
         val bars = ArrayList<FloatArray>()
         for (endX in listOf(west + 10, east - 10)) for (k in 0 until 6) {
             val z = rz - halfWidth + 3 + k * 4.5f
             bars += floatArrayOf(endX - 8, 0.14f, z, endX + 8, 0.14f, z)
         }
-        Primitives.tubes(bars, 0.8f)?.let { flats += ModelPart(it, Xf().m, paint, lit = false) }
+        Primitives.tubes(bars, 0.8f)?.let { lines += ModelPart(it, Xf().m, paint, lit = false) }
 
         // The hangar: walls to the eaves, an orange gable roof with its ridge
         // running north to south, the west slope lettered AltiX, and the
@@ -243,7 +251,7 @@ object Models {
             )
         }
         solids += ModelPart(Shapes.plane(40f, 10f), Xf().t(hx, 5.2f, north - 0.15f).r(PI.toFloat(), 0f, 1f, 0f).m, rgba(0x4d5560))
-        return flats to solids
+        return AirfieldParts(flats, lines, solids)
     }
 
     /** The lettering on the hangar's west slope: AltiX across the orange roof, black with a red X. */
