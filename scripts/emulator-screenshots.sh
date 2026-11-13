@@ -7,6 +7,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 shot() { sleep "${2:-1}"; adb exec-out screencap -p > "screenshots/$1.png"; }
 # Skip the one-time "Viewing full screen" hint, which would cover the app.
 adb shell settings put secure immersive_mode_confirmations confirmed
+# On a slow emulator the launcher stops responding and its dialog lies over the app, taking every tap.
+# No such dialogs from here on: the setting is read at the change of screen size below.
+adb shell settings put global hide_error_dialogs 1
 # A 16:9 screen, the shape Google Play takes for phone screenshots.
 adb shell wm size 1080x1920
 adb shell pm grant com.skyalt.canopy android.permission.ACCESS_FINE_LOCATION || true
@@ -37,12 +40,19 @@ has_ui() {
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   adb exec-out cat /sdcard/ui.xml | grep -q "$1"
 }
+# Sends away an "isn't responding" dialog that is already up.
+clear_dialogs() {
+  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1
+  if has_ui "t responding"; then tap_ui "Wait"; sleep 1; fi
+}
 # The tools, in portrait.
 adb shell settings put system accelerometer_rotation 0
 adb shell settings put system user_rotation 0
 adb logcat -c
 adb shell am start -n com.skyalt.canopy/.MainActivity
-shot 00-tools 8
+sleep 6
+clear_dialogs
+shot 00-tools 2
 tap_ui "Wingload Calculator" && shot 00a-wingload 2 && back
 tap_ui "Repack Reminder" && shot 00b-repack 2 && back
 tap_ui "Landing Pattern Assistant" && {
@@ -149,7 +159,7 @@ has_like() {
 tap_like() {
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   adb exec-out cat /sdcard/ui.xml > /tmp/ui.xml
-  python3 - "$1" <<'PY' > /tmp/xy || { echo "nothing like $1"; return 1; }
+  python3 - "$1" <<'PY' > /tmp/xy || { echo "nothing like $1"; cp /tmp/ui.xml "screenshots/13-no-$(echo "$1" | tr ' ' '-').xml"; return 1; }
 import re, sys
 xml = open('/tmp/ui.xml', encoding='utf-8', errors='ignore').read()
 want = sys.argv[1].lower()
@@ -194,11 +204,13 @@ put scripts/dropzone-card-prefs.xml shared_prefs/canopy-simulator.xml
 adb shell "run-as com.skyalt.canopy rm -f shared_prefs/canopy-simulator.xml.bak"
 adb shell am start -n com.skyalt.canopy/.MainActivity
 sleep 8
+clear_dialogs
 tap_like "Canopy Simulator"
 sleep 6
 # Free practice opens with the settings drawer: the start-point map first, then the picture editor at the drawer's end.
 tap_like "Free practice"
 sleep 4
+has_like "Flight setup"; adb exec-out cat /sdcard/ui.xml > screenshots/13-ui-drawer.xml
 if find_down "Start point" $((W - 400)) && tap_like "Start point"; then
   shot 13-dropzone-start-map 3
   tap_like "Done"
