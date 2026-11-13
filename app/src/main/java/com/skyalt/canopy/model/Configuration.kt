@@ -176,15 +176,31 @@ data class DropzoneSettings(
             )
         }
 
+    /**
+     * The picture at another width, sized about the target: what lies under
+     * the rings stays under them. The width keeps within its limits.
+     */
+    fun resized(widthMeters: Double): DropzoneSettings {
+        val width = widthMeters.clamp(NARROWEST_METERS, WIDEST_METERS)
+        val factor = width / kotlin.math.max(this.widthMeters, 1.0)
+        return copy(widthMeters = width, eastOffsetMeters = eastOffsetMeters * factor, southOffsetMeters = southOffsetMeters * factor)
+    }
+
     fun clamped(): DropzoneSettings {
         var rotation = normalizedDegrees(rotationDegrees)
         if (rotation > 180) rotation -= 360
         return copy(
-            widthMeters = widthMeters.clamp(50.0, 3000.0),
+            widthMeters = widthMeters.clamp(NARROWEST_METERS, WIDEST_METERS),
             eastOffsetMeters = eastOffsetMeters.clamp(-1000.0, 1000.0),
             southOffsetMeters = southOffsetMeters.clamp(-1000.0, 1000.0),
             rotationDegrees = rotation,
         )
+    }
+
+    companion object {
+        /** The limits of the picture's width on the ground. */
+        const val NARROWEST_METERS = 50.0
+        const val WIDEST_METERS = 3000.0
     }
 }
 
