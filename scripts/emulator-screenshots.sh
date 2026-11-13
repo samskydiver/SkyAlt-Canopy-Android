@@ -168,7 +168,7 @@ fi
 # side closes them.
 wait_like "Choose a scene" 5
 tap_like "Landing with the aircraft" || echo "no scene row"
-wait_like "Start run" 10
+wait_like "Flight setup" 10
 adb shell input tap $((W / 5)) $((H / 2))
 shot 02-paused 2
 # Start the run.
@@ -192,7 +192,10 @@ shot 06d-settings 3
 adb shell input tap $((W / 5)) $((H / 2))
 sleep 1
 # Casting with the toggles, before motion capture. The phone's 3D view leaves the screen while it casts and is
-# made again afterwards, with everything in it: the canopy must still fly over the jumper.
+# made again afterwards, with everything in it: the canopy must still fly over the jumper. A new run, held in
+# the air, so that the landing's card does not cover it (a reset starts the run at once).
+tap_like "Reset" || echo "no reset button"
+tap_like "Pause" || echo "no pause button"
 adb shell settings put global overlay_display_devices 1280x720/240
 sleep 3
 tap_like "Cast" || echo "no cast button"
