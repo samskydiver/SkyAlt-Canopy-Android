@@ -14,7 +14,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
@@ -45,6 +50,8 @@ class Planning3DState {
     var capturing by mutableStateOf(false)
         internal set
     internal var map: GoogleMap? = null
+    /** The panels over the 3D view, in window pixels, by name. */
+    internal val obstructions = mutableStateMapOf<String, android.graphics.RectF>()
 
     fun toggle() {
         shows = !shows
@@ -57,6 +64,20 @@ class Planning3DState {
 
 @Composable
 fun rememberPlanning3DState() = remember { Planning3DState() }
+
+/**
+ * Marks a panel that lies over the 3D view, so the paths are framed clear
+ * of it, as planningPath3DObstruction() on the iPhone. [key] names it
+ * among the tool's panels.
+ */
+fun Modifier.planning3DObstruction(state: Planning3DState, key: String): Modifier = composed {
+    DisposableEffect(state, key) { onDispose { state.obstructions.remove(key) } }
+    onGloballyPositioned { coordinates ->
+        val b = coordinates.boundsInWindow()
+        val rect = android.graphics.RectF(b.left, b.top, b.right, b.bottom)
+        if (state.obstructions[key] != rect) state.obstructions[key] = rect
+    }
+}
 
 /** Lets the 3D view borrow the map to photograph the ground; call it inside the GoogleMap content. */
 @OptIn(MapsComposeExperimentalApi::class)
@@ -164,6 +185,7 @@ fun Planning3DLayer(state: Planning3DState, content: PlanningPath3DContent, modi
         modifier = modifier,
         update = { view ->
             view.update(content, state.ground)
+            view.setObstructions(state.obstructions.values.sortedBy { it.top * 10_000 + it.left })
             if (appliedRequest[0] != state.topViewRequest) {
                 appliedRequest[0] = state.topViewRequest
                 view.showTopView(animated = true)

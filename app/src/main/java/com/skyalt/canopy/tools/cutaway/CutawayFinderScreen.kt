@@ -63,6 +63,7 @@ import com.skyalt.canopy.tools.map.ApplyCameraRequests
 import com.skyalt.canopy.tools.map.Planning3DButtons
 import com.skyalt.canopy.tools.map.Planning3DGroundLoader
 import com.skyalt.canopy.tools.map.Planning3DLayer
+import com.skyalt.canopy.tools.map.planning3DObstruction
 import com.skyalt.canopy.tools.map.Planning3DMapHook
 import com.skyalt.canopy.tools.map.Planning3DState
 import com.skyalt.canopy.tools.map.rememberPlanning3DState
@@ -117,7 +118,7 @@ fun CutawayFinderScreen(session: CutawayFinderSession, settings: AppSettings, on
             CutawayMap(session, tracker.hasPermission, with(density) { PaddingValues(top = topInset.toDp(), bottom = bottomInset.toDp()) }, state3d)
             Planning3DLayer(state3d, content3d, Modifier.fillMaxSize())
 
-            WindStatusBadge(session, Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 8.dp).onSizeChanged { topInset = it.height })
+            WindStatusBadge(session, Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 8.dp).onSizeChanged { topInset = it.height }.planning3DObstruction(state3d, "wind"))
 
             val controls: @Composable () -> Unit = {
                 if (!state3d.shows) {
@@ -145,14 +146,15 @@ fun CutawayFinderScreen(session: CutawayFinderSession, settings: AppSettings, on
                 MapButton(session.mode.icon, s("Wind Data Mode"), showsProgress = session.isLoading) { showsWind = true }
             }
             if (landscape) {
-                Row(Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) { controls() }
+                Row(Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = 8.dp).planning3DObstruction(state3d, "buttons"), horizontalArrangement = Arrangement.spacedBy(10.dp)) { controls() }
             } else {
-                Column(Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.End) { controls() }
+                Column(Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = 8.dp).planning3DObstruction(state3d, "buttons"), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.End) { controls() }
             }
 
             InputPanel(
                 session, settings.altitudeUnit,
-                Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp).padding(bottom = 18.dp).onSizeChanged { bottomInset = it.height },
+                Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp).padding(bottom = 18.dp).onSizeChanged { bottomInset = it.height }
+                    .planning3DObstruction(state3d, "input"),
             )
 
             if (session.isLoading) {

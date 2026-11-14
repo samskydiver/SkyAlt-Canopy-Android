@@ -40,8 +40,14 @@ data class PlanningPath3DContent(
 
     /** Every point the view has to frame, rings by their edges. */
     val framingCoordinates: List<Coordinate>
-        get() = paths.flatMap { p -> p.points.map { it.coordinate } } + markers.map { it.point.coordinate } +
-            rings.flatMap { ring -> (0 until 4).map { MapGeometry.coordinate(ring.center.coordinate, ring.radiusMeters, it * 90.0) } }
+        get() = framingPoints.map { it.coordinate }
+
+    /** Every point the view has to frame, at its height; rings by their edges. */
+    val framingPoints: List<Path3DPoint>
+        get() = paths.flatMap { it.points } + markers.map { it.point } +
+            rings.flatMap { ring ->
+                (0 until 4).map { Path3DPoint(MapGeometry.coordinate(ring.center.coordinate, ring.radiusMeters, it * 90.0), ring.center.altitudeMeters) }
+            }
 
     val highestAltitudeMeters: Double
         get() = (paths.flatMap { p -> p.points.map { it.altitudeMeters } } + markers.map { it.point.altitudeMeters } + rings.map { it.center.altitudeMeters })
@@ -306,5 +312,114 @@ object Path3DTopView {
         val horizontal = Math.toRadians(HORIZONTAL_FIELD_OF_VIEW_DEGREES / 2)
         val vertical = atan(tan(horizontal) / max(aspect, 0.01))
         return max(halfWidth / tan(horizontal), halfHeight / tan(vertical)) * 1.3 + highestAltitudeMeters
+    }
+}
+
+/** A rectangle of the screen in pixels, left and top inclusive. */
+data class Path3DScreenRect(val left: Double, val top: Double, val right: Double, val bottom: Double) {
+    val width get() = right - left
+    val height get() = bottom - top
+}
+
+/**
+ * Fits the 3D view's camera to the plan, as PlanningPath3DView.swift does
+ * since the oblique view (iOS PR #24): every point inside the part of the
+ * screen the tool's panels leave free, as close as it can be.
+ */
+object Path3DFit {
+    /** The camera's place and how far ahead of it the point it looks at is. */
+    class Result(val position: DoubleArray, val distance: Double)
+
+    /**
+     * The part of a [width] × [height] view the paths are framed in: clear
+     * of the [panels] over it, less a margin, with more room at the top for
+     * the tags over the highest points. Each panel is cut off at whichever
+     * edge costs the least room. [density] turns the iPhone's points into
+     * pixels.
+     */
+    fun contentRect(width: Double, height: Double, panels: List<Path3DScreenRect>, density: Double): Path3DScreenRect {
+        var top = 0.0; var bottom = 0.0; var left = 0.0; var right = 0.0
+        for (panel in panels) {
+            val l = max(panel.left, 0.0); val t = max(panel.top, 0.0)
+            val r = minOf(panel.right, width); val b = minOf(panel.bottom, height)
+            if (r - l <= density || b - t <= density) continue
+            val cuts = listOf(b, height - t, r, width - l)
+            when (cuts.indices.minBy { cuts[it] }) {
+                0 -> top = max(top, b)
+                1 -> bottom = max(bottom, height - t)
+                2 -> left = max(left, r)
+                else -> right = max(right, width - l)
+            }
+        }
+        top += 30 * density
+        // The tags hang about their own half-width either side of a point.
+        val dx = 44 * density; val dy = 12 * density
+        val framed = Path3DScreenRect(left + dx, top + dy, width - right - dx, height - bottom - dy)
+        // Panels that leave too little room are ignored rather than squeezing the paths into a sliver.
+        if (framed.width > width * 0.3 && framed.height > height * 0.3) return framed
+        return Path3DScreenRect(dx, dy, width - dx, height - dy)
+    }
+
+    /**
+     * The camera looking along [forward] (with [right] and [up] square to
+     * it) that puts every point inside [content], as close as it can: the
+     * distance back from [center] by bisection, and for each distance the
+     * sideways and upward shift the points allow, which is exact because
+     * the screen position of a point is linear in the shift at a fixed
+     * depth. [halfFovX] is half the horizontal field of view, in radians.
+     */
+    fun fit(
+        points: List<DoubleArray>,
+        center: DoubleArray,
+        forward: DoubleArray,
+        right: DoubleArray,
+        up: DoubleArray,
+        width: Double,
+        height: Double,
+        content: Path3DScreenRect,
+        halfFovX: Double,
+    ): Result {
+        val w = max(width, 1.0); val h = max(height, 1.0)
+        val tanX = tan(halfFovX)
+        val tanY = tanX * h / w
+        // The free part of the screen, from −1 to 1 each way, y up.
+        val leftEdge = content.left / w * 2 - 1
+        val rightEdge = content.right / w * 2 - 1
+        val topEdge = 1 - content.top / h * 2
+        val bottomEdge = 1 - content.bottom / h * 2
+        fun dot(a: DoubleArray, b: DoubleArray) = a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        val projected = points.map { p ->
+            val o = doubleArrayOf(p[0] - center[0], p[1] - center[1], p[2] - center[2])
+            doubleArrayOf(dot(o, right), dot(o, up), dot(o, forward))
+        }
+        val nearest = projected.maxOfOrNull { -it[2] } ?: 0.0
+
+        /** The shifts that keep every point inside at this distance, or null. */
+        fun shifts(distance: Double): DoubleArray? {
+            var lowX = Double.NEGATIVE_INFINITY; var highX = Double.POSITIVE_INFINITY
+            var lowY = Double.NEGATIVE_INFINITY; var highY = Double.POSITIVE_INFINITY
+            for (p in projected) {
+                val depth = distance + p[2]
+                if (depth <= 1) return null
+                lowX = max(lowX, p[0] - rightEdge * tanX * depth)
+                highX = minOf(highX, p[0] - leftEdge * tanX * depth)
+                lowY = max(lowY, p[1] - topEdge * tanY * depth)
+                highY = minOf(highY, p[1] - bottomEdge * tanY * depth)
+            }
+            if (lowX > highX || lowY > highY) return null
+            return doubleArrayOf((lowX + highX) / 2, (lowY + highY) / 2)
+        }
+
+        var near = nearest + 1
+        var far = max(near * 2, 100.0)
+        while (shifts(far) == null && far < 1_000_000) far *= 2
+        for (i in 0 until 40) {
+            if (far - near <= 0.5) break
+            val middle = (near + far) / 2
+            if (shifts(middle) == null) near = middle else far = middle
+        }
+        val shift = shifts(far) ?: doubleArrayOf(0.0, 0.0)
+        val position = DoubleArray(3) { center[it] - forward[it] * far + right[it] * shift[0] + up[it] * shift[1] }
+        return Result(position, far)
     }
 }
