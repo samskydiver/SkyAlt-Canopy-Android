@@ -281,8 +281,9 @@ if tap_like "Wind Tunnel" && wait_like "Presets" 30; then
   tap_like "Tunnel" && shot 14a-tunnel 5
   tap_like "Sit fly" && shot 14b-sit-fly 4
   tap_like "Oblique" && shot 14c-side 2
-  tap_like "Does it right itself?" && shot 14d-chart 3
-  tap_like "Body and air" && find_down "Drag calibration" $((W - 300)) && shot 14e-body 2
+  # The cards lower down in the side columns are scrolled to first.
+  find_down "Does it right itself?" $((W / 8)) && tap_like "Does it right itself?" && find_down "Angle away from the pose" $((W / 8)) && shot 14d-chart 3
+  find_down "Body and air" $((W - W / 8)) && tap_like "Body and air" && find_down "Drag calibration" $((W - W / 8)) && shot 14e-body 2
   back
 else
   echo "the wind tunnel did not open"

@@ -389,16 +389,24 @@ fun Knob(
 
 /** A small segmented control in the simulator's style. */
 @Composable
-fun <T> Segments(items: List<Pair<T, String>>, selection: T, compact: Boolean = false, modifier: Modifier = Modifier, onPick: (T) -> Unit) {
+fun <T> Segments(
+    items: List<Pair<T, String>>,
+    selection: T,
+    compact: Boolean = false,
+    modifier: Modifier = Modifier,
+    /** Compact items that still share the whole width. */
+    fill: Boolean = false,
+    onPick: (T) -> Unit,
+) {
     Row(modifier.background(WTStyle.surface2, RoundedCornerShape(9.dp)).padding(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         for ((value, label) in items) {
             val on = value == selection
             Box(
-                (if (compact) Modifier else Modifier.weight(1f))
+                (if (compact && !fill) Modifier else Modifier.weight(1f))
                     .clip(RoundedCornerShape(7.dp))
                     .background(if (on) WTStyle.accent else Color.Transparent)
                     .clickable { onPick(value) }
-                    .padding(horizontal = if (compact) 6.dp else 9.dp, vertical = if (compact) 4.dp else 6.dp),
+                    .padding(horizontal = if (fill) 2.dp else if (compact) 6.dp else 9.dp, vertical = if (compact) 4.dp else 6.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(label, style = text(if (compact) 11.sp else 12.5.sp, if (on) Color.White else WTStyle.ink2, FontWeight.SemiBold), maxLines = 1, softWrap = false)
@@ -478,7 +486,9 @@ private fun Presets(engine: WindTunnelEngine, state: WTScreenState, t: WTText, p
 @Composable
 private fun Zones(engine: WindTunnelEngine, state: WTScreenState, t: WTText, p: WTPanel) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Segments(WTMeasure.entries.map { it to t.measureName(it) }, state.settings.measure, compact = true) { engine.setMeasure(it) }
+        Segments(WTMeasure.entries.map { it to t.measureName(it) }, state.settings.measure, compact = true, modifier = Modifier.fillMaxWidth(), fill = true) {
+            engine.setMeasure(it)
+        }
         for (bar in p.zoneBars) {
             Box(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.CenterStart) {
                 Canvas(Modifier.fillMaxSize()) {
