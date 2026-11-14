@@ -124,6 +124,9 @@ tap_ui "Landing Pattern Assistant" && {
   shot 00c-landing 4
   adb shell input tap 540 1000
   shot 00d-landing-pattern 10
+  # 3D opens at 45° from the south, the pattern clear of the result card and the buttons.
+  tap_like "Show in 3D" && shot 00d2-landing-3d 8
+  tap_like "Top View" && shot 00d3-landing-top 3
   back
 }
 tap_ui "Exit Spot" && {
@@ -145,6 +148,7 @@ tap_ui "Cutaway Finder" && {
   done
   adb shell input motionevent UP 690 1000
   shot 00h-cutaway-drawn 10
+  tap_like "Show in 3D" && shot 00h2-cutaway-3d 8
   back
 }
 tap_ui "Settings" && shot 00i-settings 2 && tap_ui "Tools"
@@ -266,6 +270,24 @@ else
   echo "the simulator did not open for the dropzone picture"
   shot 13-not-opened 1
 fi
+# The wind tunnel, from the Tools tab: open air, then the tunnel, a preset, another view, the panels.
+adb shell am force-stop com.skyalt.canopy
+adb shell am start -n com.skyalt.canopy/.MainActivity
+wait_like "Wind Tunnel" 15
+clear_dialogs
+if tap_like "Wind Tunnel" && wait_like "Presets" 30; then
+  shot 14-wind-tunnel 4
+  cp /tmp/ui.xml screenshots/14-ui-wind-tunnel.xml
+  tap_like "Tunnel" && shot 14a-tunnel 5
+  tap_like "Sit fly" && shot 14b-sit-fly 4
+  tap_like "Oblique" && shot 14c-side 2
+  tap_like "Does it right itself?" && shot 14d-chart 3
+  tap_like "Body and air" && find_down "Drag calibration" $((W - 300)) && shot 14e-body 2
+  back
+else
+  echo "the wind tunnel did not open"
+  shot 14-not-opened 1
+fi
 # The release build counts launches: the third one shows AltiX Pro.
 if [ -f app/build/outputs/apk/release/app-release.apk ]; then
   adb install -r app/build/outputs/apk/release/app-release.apk
@@ -276,7 +298,7 @@ if [ -f app/build/outputs/apk/release/app-release.apk ]; then
   done
   shot 12-paywall 2
 fi
-adb logcat -d -s AndroidRuntime:E CanopyGL:E CanopyModel:E AircraftSide:E AircraftModel:E '*:F' > screenshots/logcat.txt || true
+adb logcat -d -s AndroidRuntime:E CanopyGL:E WindTunnel:E CanopyModel:E AircraftSide:E AircraftModel:E '*:F' > screenshots/logcat.txt || true
 adb logcat -d > screenshots/logcat-full.txt || true
 # The app's life, for the job's log: its starts, the canopies hung in the scene, and any stop that was not asked for.
 grep -aE "CanopyModel|ANR in|Killing [0-9]+:com\.skyalt|com\.skyalt\.canopy.*(has died|died)|Force finishing|FATAL EXCEPTION|Displayed com\.skyalt|Start proc [0-9]+:com\.skyalt" screenshots/logcat-full.txt | tail -150 || true
