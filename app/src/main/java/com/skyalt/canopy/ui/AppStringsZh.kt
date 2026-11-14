@@ -538,6 +538,10 @@ internal object AppStringsZh {
         m["Show Map"] = "返回地图"
         m["Top View"] = "俯视"
         m["your own picture under the target"] = "把你的图片放在目标下方"
+        m["Wind Tunnel"] = "风洞模拟器"
+        m["Body-flight poses, forces and stability in 3D"] = "3D 体验人体飞行姿态、受力和稳定性"
+        m["Fly the 3D wind tunnel and body-flight simulator as often as you like."] = "不限次数使用 3D 风洞人体飞行模拟器。"
+        m["Unlimited Wind Tunnel sessions"] = "不限次数使用风洞模拟器"
     }
 
 }

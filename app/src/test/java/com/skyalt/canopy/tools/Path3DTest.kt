@@ -2,7 +2,9 @@ package com.skyalt.canopy.tools
 
 import com.skyalt.canopy.tools.planning.Coordinate
 import com.skyalt.canopy.tools.planning.MercatorRect
+import com.skyalt.canopy.tools.planning.Path3DFit
 import com.skyalt.canopy.tools.planning.Path3DFrame
+import com.skyalt.canopy.tools.planning.Path3DScreenRect
 import com.skyalt.canopy.tools.planning.Path3DMeshes
 import com.skyalt.canopy.tools.planning.Path3DPath
 import com.skyalt.canopy.tools.planning.Path3DPoint
@@ -82,5 +84,43 @@ class Path3DTest {
         // 2,600 m: 2,500 is too close under the top.
         assertEquals(2_000.0, PlanningPath3DContent.heightTags(points, 2_600.0, 500.0).first().altitudeMeters, 0.0)
         assertTrue(PlanningPath3DContent(paths = listOf(Path3DPath("p", points, 0))).highestAltitudeMeters == 2_500.0)
+    }
+
+    @Test
+    fun theObliqueViewFitsEveryPointClearOfThePanels() {
+        val w = 1080.0; val h = 2000.0; val density = 2.75
+        // a result card across the top, buttons down the right
+        val panels = listOf(Path3DScreenRect(40.0, 20.0, 1040.0, 420.0), Path3DScreenRect(930.0, 470.0, 1040.0, 1100.0))
+        val content = Path3DFit.contentRect(w, h, panels, density)
+        assertEquals(420 + 30 * density + 12 * density, content.top, 1e-9)
+        assertEquals(1080 - (1080 - 930) - 44 * density, content.right, 1e-9)
+        val points = listOf(
+            doubleArrayOf(-400.0, 0.0, -300.0), doubleArrayOf(400.0, 0.0, 300.0),
+            doubleArrayOf(0.0, 900.0, -200.0), doubleArrayOf(150.0, 300.0, 250.0),
+        )
+        val s = Math.sqrt(0.5)
+        val forward = doubleArrayOf(0.0, -s, -s); val right = doubleArrayOf(1.0, 0.0, 0.0); val up = doubleArrayOf(0.0, s, -s)
+        val half = Math.toRadians(20.0)
+        val fit = Path3DFit.fit(points, doubleArrayOf(0.0, 0.0, 0.0), forward, right, up, w, h, content, half)
+        val tanX = Math.tan(half); val tanY = tanX * h / w
+        var touches = 0
+        for (p in points) {
+            val o = DoubleArray(3) { p[it] - fit.position[it] }
+            val depth = o[0] * forward[0] + o[1] * forward[1] + o[2] * forward[2]
+            val sx = (o[0] * right[0] + o[1] * right[1] + o[2] * right[2]) / (depth * tanX)
+            val sy = (o[0] * up[0] + o[1] * up[1] + o[2] * up[2]) / (depth * tanY)
+            val px = (sx + 1) / 2 * w; val py = (1 - sy) / 2 * h
+            assertTrue("x $px", px >= content.left - 1 && px <= content.right + 1)
+            assertTrue("y $py", py >= content.top - 1 && py <= content.bottom + 1)
+            if (px < content.left + 3 || px > content.right - 3 || py < content.top + 3 || py > content.bottom - 3) touches++
+        }
+        // as close as it fits: some point is at an edge
+        assertTrue(touches > 0)
+    }
+
+    @Test
+    fun panelsThatLeaveTooLittleRoomAreIgnored() {
+        val c = Path3DFit.contentRect(1000.0, 1000.0, listOf(Path3DScreenRect(0.0, 0.0, 1000.0, 800.0)), 1.0)
+        assertEquals(12.0, c.top, 1e-9)
     }
 }

@@ -82,6 +82,7 @@ import com.skyalt.canopy.tools.map.ApplyCameraRequests
 import com.skyalt.canopy.tools.map.Planning3DButtons
 import com.skyalt.canopy.tools.map.Planning3DGroundLoader
 import com.skyalt.canopy.tools.map.Planning3DLayer
+import com.skyalt.canopy.tools.map.planning3DObstruction
 import com.skyalt.canopy.tools.map.Planning3DMapHook
 import com.skyalt.canopy.tools.map.Planning3DState
 import com.skyalt.canopy.tools.map.rememberPlanning3DState
@@ -173,7 +174,8 @@ fun LandingPatternScreen(
             Planning3DLayer(state3d, content3d, Modifier.fillMaxSize())
 
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 6.dp).onSizeChanged { topInset = it.height },
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(top = 6.dp).onSizeChanged { topInset = it.height }
+                    .planning3DObstruction(state3d, "result"),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 ResultCard(session, settings.altitudeUnit)
@@ -188,7 +190,8 @@ fun LandingPatternScreen(
             }
 
             Column(
-                Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = with(density) { topInset.toDp() } + 18.dp),
+                Modifier.align(Alignment.TopEnd).padding(end = 14.dp, top = with(density) { topInset.toDp() } + 18.dp)
+                    .planning3DObstruction(state3d, "buttons"),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalAlignment = Alignment.End,
             ) {

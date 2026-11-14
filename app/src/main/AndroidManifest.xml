@@ -37,6 +37,11 @@
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|smallestScreenSize|density|uiMode|locale|layoutDirection"
             android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".windtunnel.WindTunnelActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|smallestScreenSize|density|uiMode|locale|layoutDirection" />
         <meta-data android:name="com.google.android.geo.API_KEY" android:value="${MAPS_API_KEY}" />
     </application>
 </manifest>

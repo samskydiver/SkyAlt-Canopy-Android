@@ -19,11 +19,13 @@ import com.skyalt.canopy.scene.SceneShader
 import com.skyalt.canopy.scene.Textures
 import com.skyalt.canopy.sim.MultisampleConfigChooser
 import com.skyalt.canopy.tools.planning.MercatorRect
+import com.skyalt.canopy.tools.planning.Path3DFit
 import com.skyalt.canopy.tools.planning.Path3DFrame
 import com.skyalt.canopy.tools.planning.Path3DMarkerStyle
 import com.skyalt.canopy.tools.planning.Path3DMesh
 import com.skyalt.canopy.tools.planning.Path3DMeshes
 import com.skyalt.canopy.tools.planning.Path3DPoint
+import com.skyalt.canopy.tools.planning.Path3DScreenRect
 import com.skyalt.canopy.tools.planning.Path3DTopView
 import com.skyalt.canopy.tools.planning.PlanningPath3DContent
 import com.skyalt.canopy.tools.planning.WebMercator
@@ -40,16 +42,20 @@ import kotlin.math.tan
 class Planning3DGround(val bitmap: Bitmap, val rect: MercatorRect, val style: PlanningMapStyle)
 
 /**
- * The planned paths in 3D over the map, at their true heights. It opens
- * looking straight down with north up, like the map; one finger turns and
- * tilts it, a pinch zooms, two fingers pan, and [showTopView] brings the
- * top view back. Port of PlanningPath3DView.swift; x east, y up, z south,
- * metres.
+ * The planned paths in 3D over the map, at their true heights. It opens on
+ * a 45° oblique view from the south, north ahead; one finger turns and
+ * tilts it, a pinch zooms, two fingers pan, and [showTopView] looks
+ * straight down with north up, like the map. The paths are framed in the
+ * part of the view the tool's panels leave free ([setObstructions]).
+ * Port of PlanningPath3DView.swift; x east, y up, z south, metres.
  */
 @SuppressLint("ViewConstructor")
 class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
-    /** Where the camera looks from: a point on the ground, a distance and two angles. */
-    private data class Camera(val targetX: Double, val targetZ: Double, val distance: Double, val azimuth: Double, val elevation: Double)
+    /** Where the camera looks from: the point it looks at, a distance and two angles. */
+    private data class Camera(val targetX: Double, val targetY: Double, val targetZ: Double, val distance: Double, val azimuth: Double, val elevation: Double)
+
+    /** The views the camera is fitted to: 45° from the south (the one 3D opens on, Sam 2026-11-14), or straight down with north up. */
+    private enum class Framing(val elevation: Double) { OBLIQUE(PI / 4), TOP(MAX_ELEVATION) }
 
     private class Animation(val from: Camera, val to: Camera, val start: Long, val durationMs: Long)
 
@@ -66,7 +72,7 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
 
     private class Tag(val position: FloatArray, val bitmap: Bitmap, val points: Float, val lift: Float)
 
-    @Volatile private var camera = Camera(0.0, 0.0, 1_000.0, 0.0, MAX_ELEVATION)
+    @Volatile private var camera = Camera(0.0, 0.0, 0.0, 1_000.0, 0.0, PI / 4)
     @Volatile private var animation: Animation? = null
     @Volatile private var prepared: Prepared? = null
     private var version = 0
@@ -75,8 +81,11 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
     private var ground: Planning3DGround? = null
     private var frame: Path3DFrame? = null
     private var hasContent = false
-    /** While the person has not moved the camera since the last top view, the view follows changes. */
-    private var isAtTopView = true
+    /** While the person has not moved the camera since the last fitted view, the view follows changes. */
+    private var isAtFittedView = true
+    private var fittedView = Framing.OBLIQUE
+    /** The panels over the view, in window pixels. */
+    private var obstructions: List<RectF> = emptyList()
 
     private var lastX = 0f
     private var lastY = 0f
@@ -112,30 +121,67 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
         val needed = neededRect()
         if (frame == null) frame = Path3DFrame(needed.midX, needed.midY)
         prepare(needed)
-        if (first) showTopView(animated = false) else if (isAtTopView) showTopView(animated = true)
+        if (first) show(Framing.OBLIQUE, animated = false) else if (isAtFittedView) show(fittedView, animated = true)
     }
 
-    /** Straight down on everything shown, north up, close enough that it all fits. */
-    fun showTopView(animated: Boolean) {
+    /** Straight down on everything shown, north up. */
+    fun showTopView(animated: Boolean) = show(Framing.TOP, animated)
+
+    /** The panels over the view, in window pixels; the paths are framed clear of them. */
+    fun setObstructions(frames: List<RectF>) {
+        if (frames == obstructions) return
+        obstructions = frames
+        if (hasContent && isAtFittedView) show(fittedView, animated = true)
+    }
+
+    /**
+     * Everything shown, as close as it fits in the part of the view the
+     * panels leave free: straight down with north up, or at 45° from the
+     * south.
+     */
+    private fun show(framing: Framing, animated: Boolean) {
         val f = frame ?: return
         val needed = neededRect()
-        val aspect = if (height > 0) width.toDouble() / height else 0.5
+        // The ground at least 300 m each way, and every point at its height.
+        val points = ArrayList<DoubleArray>()
+        for (x in listOf(needed.x, needed.maxX)) for (y in listOf(needed.y, needed.maxY)) {
+            points += doubleArrayOf(f.x(x).toDouble(), 0.0, f.z(y).toDouble())
+        }
+        for (p in content.framingPoints) points += f.local(p).let { doubleArrayOf(it[0].toDouble(), it[1].toDouble(), it[2].toDouble()) }
+        val center = doubleArrayOf(f.x(needed.midX).toDouble(), 0.0, f.z(needed.midY).toDouble())
+        // Forward, right and up of the camera; north is up on the screen.
+        val e = framing.elevation
+        val forward = doubleArrayOf(0.0, -sin(e), -cos(e))
+        val right = doubleArrayOf(1.0, 0.0, 0.0)
+        val up = doubleArrayOf(0.0, cos(e), -sin(e))
+        val w = max(width, 1).toDouble(); val h = max(height, 1).toDouble()
+        val fit = Path3DFit.fit(points, center, forward, right, up, w, h, Path3DFit.contentRect(w, h, panelsInView(), density.toDouble()), HALF_FOV)
         val target = Camera(
-            targetX = f.x(needed.midX).toDouble(),
-            targetZ = f.z(needed.midY).toDouble(),
-            distance = Path3DTopView.distance(needed, f, aspect, content.highestAltitudeMeters),
+            targetX = fit.position[0] + forward[0] * fit.distance,
+            targetY = fit.position[1] + forward[1] * fit.distance,
+            targetZ = fit.position[2] + forward[2] * fit.distance,
+            distance = fit.distance,
             azimuth = 0.0,
-            elevation = MAX_ELEVATION,
+            elevation = e,
         )
-        isAtTopView = true
+        isAtFittedView = true
+        fittedView = framing
         animation = if (animated) Animation(camera, target, SystemClock.uptimeMillis(), 550) else null
         if (!animated) camera = target
         requestRender()
     }
 
+    /** The panels in this view's own pixels. */
+    private fun panelsInView(): List<Path3DScreenRect> {
+        if (obstructions.isEmpty()) return emptyList()
+        val at = IntArray(2)
+        getLocationInWindow(at)
+        return obstructions.map { Path3DScreenRect((it.left - at[0]).toDouble(), (it.top - at[1]).toDouble(), (it.right - at[0]).toDouble(), (it.bottom - at[1]).toDouble()) }
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (hasContent && isAtTopView) showTopView(animated = false)
+        if (hasContent && isAtFittedView) show(fittedView, animated = false)
     }
 
     private fun neededRect(): MercatorRect = content.neededRect ?: run {
@@ -248,7 +294,7 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
                 centroid(event, event.actionIndex).let { (x, y) -> lastCentroidX = x; lastCentroidY = y }
             }
             MotionEvent.ACTION_MOVE -> {
-                isAtTopView = false
+                isAtFittedView = false
                 val c = camera
                 if (event.pointerCount >= 2) {
                     val (x, y) = centroid(event, -1)
@@ -371,6 +417,7 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
                 if (dAz < -PI) dAz += 2 * PI
                 c = Camera(
                     a.from.targetX + (a.to.targetX - a.from.targetX) * e,
+                    a.from.targetY + (a.to.targetY - a.from.targetY) * e,
                     a.from.targetZ + (a.to.targetZ - a.from.targetZ) * e,
                     a.from.distance + (a.to.distance - a.from.distance) * e,
                     a.from.azimuth + dAz * e,
@@ -382,13 +429,13 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
 
             val ce = cos(c.elevation); val se = sin(c.elevation)
             val sa = sin(c.azimuth); val ca = cos(c.azimuth)
-            val eye = floatArrayOf((c.targetX + c.distance * ce * sa).toFloat(), (c.distance * se).toFloat(), (c.targetZ + c.distance * ce * ca).toFloat())
+            val eye = floatArrayOf((c.targetX + c.distance * ce * sa).toFloat(), (c.targetY + c.distance * se).toFloat(), (c.targetZ + c.distance * ce * ca).toFloat())
             val up = floatArrayOf((-se * sa).toFloat(), ce.toFloat(), (-se * ca).toFloat())
             val aspect = w.toFloat() / max(h, 1)
             val fovy = Math.toDegrees(2 * atan(tan(HALF_FOV) / aspect)).toFloat()
             val near = max(0.5, c.distance * 0.002).toFloat()
             Matrix.perspectiveM(projection, 0, fovy, aspect, near, (c.distance * 30 + 60_000).toFloat())
-            Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], c.targetX.toFloat(), 0f, c.targetZ.toFloat(), up[0], up[1], up[2])
+            Matrix.setLookAtM(view, 0, eye[0], eye[1], eye[2], c.targetX.toFloat(), c.targetY.toFloat(), c.targetZ.toFloat(), up[0], up[1], up[2])
             Matrix.multiplyMM(viewProj, 0, projection, 0, view, 0)
 
             GLES30.glViewport(0, 0, w, h)
@@ -467,7 +514,7 @@ class PlanningPath3DView(context: Context) : GLSurfaceView(context) {
             GLES30.glUniform4f(shader.uColor, 1f, 1f, 1f, 1f)
             GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
             GLES30.glUniform1i(shader.uTexture, 0)
-            val forward = normalize(floatArrayOf(c.targetX.toFloat() - eye[0], -eye[1], c.targetZ.toFloat() - eye[2]))
+            val forward = normalize(floatArrayOf(c.targetX.toFloat() - eye[0], c.targetY.toFloat() - eye[1], c.targetZ.toFloat() - eye[2]))
             val right = normalize(cross(forward, up))
             val widthPoints = max(w / density, 1f)
             val metersPerPoint = (2 * tan(HALF_FOV) / widthPoints).toFloat()

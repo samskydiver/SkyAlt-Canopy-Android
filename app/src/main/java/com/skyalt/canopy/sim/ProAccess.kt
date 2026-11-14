@@ -232,38 +232,45 @@ class ProAccess(context: Context) {
  * and in the app's preferences; the highest wins. Port of
  * CanopySimulatorTrial.swift.
  */
-class SimulatorTrial(context: Context) {
-    private val prefs = context.getSharedPreferences("canopy-simulator", Context.MODE_PRIVATE)
+class SimulatorTrial(
+    context: Context,
+    /** Where the count is kept, on the phone and with the Google account. */
+    private val key: String = KEY,
+    /** How many visits are free. */
+    val freeSessions: Int = FREE_SESSIONS,
+    prefsName: String = "canopy-simulator",
+) {
+    private val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
     private val blockStore = Blockstore.getClient(context)
 
-    var sessionsUsed by mutableIntStateOf(prefs.getInt(KEY, 0))
+    var sessionsUsed by mutableIntStateOf(prefs.getInt(key, 0))
         private set
     var isLoaded by mutableStateOf(false)
         private set
 
-    val sessionsLeft get() = maxOf(0, FREE_SESSIONS - sessionsUsed)
+    val sessionsLeft get() = maxOf(0, freeSessions - sessionsUsed)
     val hasSessionsLeft get() = sessionsLeft > 0
 
     /** Reads the count kept with the Google account. */
     suspend fun load() {
         val stored = try {
-            val response = blockStore.retrieveBytes(RetrieveBytesRequest.Builder().setKeys(listOf(KEY)).build()).await()
-            response.blockstoreDataMap[KEY]?.bytes?.let { String(it).toIntOrNull() } ?: 0
+            val response = blockStore.retrieveBytes(RetrieveBytesRequest.Builder().setKeys(listOf(key)).build()).await()
+            response.blockstoreDataMap[key]?.bytes?.let { String(it).toIntOrNull() } ?: 0
         } catch (e: Exception) {
             0
         }
-        sessionsUsed = maxOf(sessionsUsed, stored, prefs.getInt(KEY, 0))
+        sessionsUsed = maxOf(sessionsUsed, stored, prefs.getInt(key, 0))
         isLoaded = true
     }
 
     /** Counts one entry into the simulator. */
     fun recordSession() {
-        val count = maxOf(sessionsUsed, prefs.getInt(KEY, 0)) + 1
+        val count = maxOf(sessionsUsed, prefs.getInt(key, 0)) + 1
         sessionsUsed = count
-        prefs.edit().putInt(KEY, count).apply()
+        prefs.edit().putInt(key, count).apply()
         try {
             blockStore.storeBytes(
-                StoreBytesData.Builder().setKey(KEY).setBytes(count.toString().toByteArray()).setShouldBackupToCloud(true).build(),
+                StoreBytesData.Builder().setKey(key).setBytes(count.toString().toByteArray()).setShouldBackupToCloud(true).build(),
             )
         } catch (_: Exception) {
         }
@@ -272,5 +279,11 @@ class SimulatorTrial(context: Context) {
     companion object {
         const val FREE_SESSIONS = 2
         private const val KEY = "canopy-simulator.sessions-used"
+
+        /** The wind tunnel's own free visits: three, counted apart from the canopy simulator's, as on the iPhone. */
+        const val WIND_TUNNEL_FREE_SESSIONS = 3
+
+        fun windTunnel(context: Context) =
+            SimulatorTrial(context, "wind-tunnel.sessions-used", WIND_TUNNEL_FREE_SESSIONS, "wind-tunnel")
     }
 }

@@ -13,6 +13,7 @@ import com.skyalt.canopy.ui.LanguageSetting
 object AppServices {
     private var proAccess: ProAccess? = null
     private var simulatorTrial: SimulatorTrial? = null
+    private var windTunnelTrial: SimulatorTrial? = null
     private var languageSetting: LanguageSetting? = null
     private var appSettings: AppSettings? = null
     private var toolSessions: com.skyalt.canopy.tools.planning.ToolSessions? = null
@@ -24,6 +25,10 @@ object AppServices {
 
     fun trial(context: Context): SimulatorTrial =
         simulatorTrial ?: SimulatorTrial(context.applicationContext).also { simulatorTrial = it }
+
+    /** The wind tunnel's own free sessions. */
+    fun windTunnelTrial(context: Context): SimulatorTrial =
+        windTunnelTrial ?: SimulatorTrial.windTunnel(context.applicationContext).also { windTunnelTrial = it }
 
     fun language(context: Context): LanguageSetting =
         languageSetting ?: LanguageSetting(context.applicationContext).also { languageSetting = it }
