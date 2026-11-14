@@ -12,9 +12,11 @@ import java.nio.IntBuffer
 /**
  * One shader for everything in the scene: lit (two-sided Lambert, as the
  * SceneKit materials) or constant, a uniform colour times optional vertex
- * colours and an optional texture, linear distance fog.
+ * colours and an optional texture, linear distance fog. A scene that
+ * lights its shapes another way passes its own [fragment] source; the
+ * uniforms it leaves out are then simply not there.
  */
-class SceneShader {
+class SceneShader(vertex: String = VERTEX, fragment: String = FRAGMENT) {
     val program: Int
     val aPosition = 0
     val aNormal = 1
@@ -36,7 +38,7 @@ class SceneShader {
     val uFogColor: Int
 
     init {
-        program = link(VERTEX, FRAGMENT)
+        program = link(vertex, fragment)
         uViewProj = GLES30.glGetUniformLocation(program, "uViewProj")
         uModel = GLES30.glGetUniformLocation(program, "uModel")
         uColor = GLES30.glGetUniformLocation(program, "uColor")
