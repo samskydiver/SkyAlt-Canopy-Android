@@ -124,7 +124,7 @@ private suspend fun captureGround(
         withTimeoutOrNull(5_000) {
             suspendCancellableCoroutine { continuation ->
                 map.setOnMapLoadedCallback { if (continuation.isActive) continuation.resume(Unit) }
-                continuation.invokeOnCancellation { map.setOnMapLoadedCallback(null) }
+                // Not here: a timeout cancels on another thread, and the map may only be touched on the main one.
             }
         }
         map.setOnMapLoadedCallback(null)
@@ -148,6 +148,8 @@ private suspend fun captureGround(
     } catch (_: Exception) {
         return null
     } finally {
+        // On the main thread: the coroutine runs on it.
+        map.setOnMapLoadedCallback(null)
         map.moveCamera(CameraUpdateFactory.newCameraPosition(held))
         state.capturing = false
         holdMapView(null)
