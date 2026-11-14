@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Lock
@@ -51,6 +52,7 @@ enum class ProFeature(val title: String, val description: String) {
     CUTAWAY_FINDER("Cutaway Finder", "Model a cutaway canopy path and possible landing area."),
     SWOOP_MODE("Swoop Mode", "Build a fully customized swoop pattern with draggable waypoints."),
     CANOPY_SIMULATOR("Canopy Simulator", "Fly the 3D canopy simulator as often as you like."),
+    WIND_TUNNEL("Wind Tunnel", "Fly the 3D wind tunnel and body-flight simulator as often as you like."),
 }
 
 /** The Tools tab: flight-planning and canopy tools, Pro-gated where needed. Port of PhoneToolsView.swift. */
@@ -59,9 +61,11 @@ fun ToolsScreen(
     padding: PaddingValues,
     pro: ProAccess,
     trial: SimulatorTrial,
+    windTunnelTrial: SimulatorTrial,
     trialEnforced: Boolean,
     onOpen: (Tool) -> Unit,
     onSimulator: () -> Unit,
+    onWindTunnel: () -> Unit,
     onLocked: (ProFeature) -> Unit,
 ) {
     val s = LocalStrings.current
@@ -76,6 +80,14 @@ fun ToolsScreen(
             }
             val locked = !pro.isPro && trialEnforced && trial.isLoaded && !trial.hasSessionsLeft
             ToolRow(s("Canopy Simulator"), subtitle, Icons.Filled.Paragliding, locked = locked, onClick = onSimulator)
+            FormDivider()
+            val tunnelSubtitle = when {
+                pro.isPro || !trialEnforced -> s("Body-flight poses, forces and stability in 3D")
+                windTunnelTrial.hasSessionsLeft -> s.format("%lld of %lld free sessions left", windTunnelTrial.sessionsLeft, windTunnelTrial.freeSessions)
+                else -> s("Free sessions used up. Subscribe to AltiX Pro to keep flying.")
+            }
+            val tunnelLocked = !pro.isPro && trialEnforced && windTunnelTrial.isLoaded && !windTunnelTrial.hasSessionsLeft
+            ToolRow(s("Wind Tunnel"), tunnelSubtitle, Icons.Filled.Air, locked = tunnelLocked, onClick = onWindTunnel)
         }
         FormSection(s("Flight Planning")) {
             ToolRow(s("Landing Pattern Assistant"), s("Plan wind-adjusted canopy landing patterns"), Icons.Filled.Route) { onOpen(Tool.LANDING_PATTERN) }

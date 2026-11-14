@@ -41,6 +41,7 @@ import com.skyalt.canopy.tools.altixColors
 import com.skyalt.canopy.tools.cutaway.CutawayFinderScreen
 import com.skyalt.canopy.tools.exitspot.ExitSpotScreen
 import com.skyalt.canopy.tools.landing.LandingPatternScreen
+import com.skyalt.canopy.windtunnel.WindTunnelActivity
 import com.skyalt.canopy.ui.Palette
 import com.skyalt.canopy.ui.ProUpgradeScreen
 import com.skyalt.canopy.ui.ProvideSimulatorLocals
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val pro = AppServices.pro(this)
         val trial = AppServices.trial(this)
+        val tunnelTrial = AppServices.windTunnelTrial(this)
         val language = AppServices.language(this)
         val settings = AppServices.settings(this)
         val repack = RepackStore(applicationContext)
@@ -76,7 +78,10 @@ class MainActivity : ComponentActivity() {
             var proSheet by remember { mutableStateOf(false) }
             var proFocus by remember { mutableStateOf<ProFeature?>(null) }
             val scope = rememberCoroutineScope()
-            LaunchedEffect(Unit) { trial.load() }
+            LaunchedEffect(Unit) {
+                trial.load()
+                tunnelTrial.load()
+            }
 
             fun showPro(feature: ProFeature?) {
                 proFocus = feature
@@ -97,6 +102,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // The wind tunnel counts its own free sessions, as on the iPhone.
+            fun openWindTunnel() {
+                scope.launch {
+                    if (!tunnelTrial.isLoaded) tunnelTrial.load()
+                    when {
+                        pro.isPro || !BuildConfig.TRIAL_ENFORCED -> startActivity(Intent(this@MainActivity, WindTunnelActivity::class.java))
+                        tunnelTrial.hasSessionsLeft -> {
+                            tunnelTrial.recordSession()
+                            startActivity(Intent(this@MainActivity, WindTunnelActivity::class.java))
+                        }
+                        else -> showPro(ProFeature.WIND_TUNNEL)
+                    }
+                }
+            }
+
             ProvideSimulatorLocals(if (dark) Palette.dark else Palette.light, strings) {
                 MaterialTheme(colorScheme = altixColors(dark)) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -109,7 +129,7 @@ class MainActivity : ComponentActivity() {
                         }
                         val back = { tool = null }
                         when {
-                            proSheet -> ProUpgradeScreen(pro, trialUsedUp = proFocus == ProFeature.CANOPY_SIMULATOR, onClose = { proSheet = false }, focus = proFocus)
+                            proSheet -> ProUpgradeScreen(pro, trialUsedUp = proFocus == ProFeature.CANOPY_SIMULATOR || proFocus == ProFeature.WIND_TUNNEL, onClose = { proSheet = false }, focus = proFocus)
                             tool == Tool.WINGLOAD -> WingLoadScreen(back)
                             tool == Tool.REPACK -> RepackScreen(repack, back)
                             tool == Tool.LANDING_PATTERN -> LandingPatternScreen(sessions.landing, settings, pro.isPro || !BuildConfig.TRIAL_ENFORCED, back, onLocked = ::showPro)
@@ -126,7 +146,7 @@ class MainActivity : ComponentActivity() {
                                 containerColor = MaterialTheme.colorScheme.background,
                             ) { padding ->
                                 if (tab == Tab.TOOLS) {
-                                    ToolsScreen(padding, pro, trial, BuildConfig.TRIAL_ENFORCED, onOpen = { tool = it }, onSimulator = ::openSimulator, onLocked = ::showPro)
+                                    ToolsScreen(padding, pro, trial, tunnelTrial, BuildConfig.TRIAL_ENFORCED, onOpen = { tool = it }, onSimulator = ::openSimulator, onWindTunnel = ::openWindTunnel, onLocked = ::showPro)
                                 } else {
                                     SettingsScreen(padding, pro, language, settings, onUnlock = { showPro(null) })
                                 }
