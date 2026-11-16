@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.SportsScore
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TouchApp
@@ -94,6 +93,7 @@ import androidx.compose.ui.graphics.toArgb
 import com.skyalt.canopy.tools.map.SavesPlanningSettings
 import com.skyalt.canopy.tools.map.BasePointBadge
 import com.skyalt.canopy.tools.map.DraggableMapMarker
+import com.skyalt.canopy.tools.map.EraserIcon
 import com.skyalt.canopy.tools.map.LabeledDot
 import com.skyalt.canopy.tools.map.LegArrowBadge
 import com.skyalt.canopy.tools.map.MapButton
@@ -206,7 +206,7 @@ fun LandingPatternScreen(
                     Planning3DButtons(state3d)
                 }
                 if (session.hasBasePoint && !state3d.shows) {
-                    MapButton(Icons.Filled.Replay, s("Reset Plan")) { showsReset = true }
+                    MapButton(EraserIcon, s("Reset Plan")) { showsReset = true }
                 }
                 MapButton(session.wind.mode.icon, s("Wind Data Mode"), showsProgress = session.wind.isLoading) { showsWind = true }
             }
@@ -283,8 +283,14 @@ private fun PlanningMap(session: LandingPatternSession, unit: AltitudeUnit, myLo
                 rotationStartHeading = session.finalHeadingDegrees
                 session.beginEnvelopeRotation()
             },
-            onRotate = { session.envelopePreviewDegrees = it },
-            onEnd = { session.finishEnvelopeRotation(rotationStartHeading, it) },
+            onRotate = {
+                session.envelopePreviewDegrees = it
+                session.headingPreviewDegrees = Geodesy.normalizedDegrees(rotationStartHeading + it)
+            },
+            onEnd = {
+                session.finishEnvelopeRotation(rotationStartHeading, it)
+                session.headingPreviewDegrees = null
+            },
         ),
         cameraPositionState = session.camera,
         properties = MapProperties(mapType = session.mapStyle.mapType, isMyLocationEnabled = myLocation && !state3d.capturing),
@@ -591,7 +597,7 @@ private fun ConfigurationPanel(session: LandingPatternSession, isPro: Boolean, o
             if (session.mode == LandingPatternMode.NORMAL) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     SwipeNumberInput(
-                        s("Final heading"), session.finalHeadingDegrees, "°", 0, 1.0,
+                        s("Final heading"), session.headingPreviewDegrees ?: session.finalHeadingDegrees, "°", 0, 1.0,
                         { session.updateFinalHeading(Geodesy.normalizedDegrees(it)) },
                         dpPerStep = 2f, valueFontSize = 20.sp, titleFontSize = 11.sp, titleColor = secondary,
                         modifier = Modifier.weight(1f),

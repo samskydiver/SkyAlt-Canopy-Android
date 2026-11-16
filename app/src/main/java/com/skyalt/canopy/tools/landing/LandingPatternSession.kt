@@ -146,6 +146,8 @@ class LandingPatternSession(
 
     /** Rotation of the drawn patterns about the landing point while one is being dragged round. */
     var envelopePreviewDegrees by mutableStateOf<Double?>(null)
+    /** The final heading while a finger turns the pattern, shown in the heading field until release. */
+    var headingPreviewDegrees by mutableStateOf<Double?>(null)
 
     private var calculationJob: Job? = null
     private var fitOnNextWind = true
@@ -157,6 +159,11 @@ class LandingPatternSession(
 
     /** A saved plan waits for the tool to open before its wind is fetched. */
     private var needsSavedPlanResume = false
+    /**
+     * No plan yet, or it was reset: the next point placed starts a new plan,
+     * on the forecast for the hour it is placed in (Sam 2026-11-16).
+     */
+    private var startsNewPlan = true
     /** The first calculation of a restored plan keeps the saved map view. */
     private var keepsMapOnNextCalculation = false
 
@@ -181,6 +188,7 @@ class LandingPatternSession(
             wind.restore(saved.wind)
             mapStyle = PlanningMapStyle.entries.firstOrNull { it.name == saved.mapStyle } ?: PlanningMapStyle.SATELLITE
             needsSavedPlanResume = windAnchor != null
+            startsNewPlan = !needsSavedPlanResume
             if (saved.mapView != null || windAnchor != null) shouldCenterOnNextLocation = false
             keepsMapOnNextCalculation = saved.mapView != null && needsSavedPlanResume
         }
@@ -195,11 +203,20 @@ class LandingPatternSession(
         }
     }
 
-    /** Fetches the wind for a plan restored from the last launch; called when the tool opens. */
+    /**
+     * Called whenever the tool opens: a plan already on the map, restored
+     * from the last launch or left there before, is worked out again on the
+     * forecast for the current hour (Sam 2026-11-16), keeping the map where
+     * it is.
+     */
     fun resumeSavedPlanIfNeeded() {
-        if (!needsSavedPlanResume) return
         needsSavedPlanResume = false
-        wind.resumeIfNeeded()
+        if (!hasBasePoint) return
+        startsNewPlan = false
+        wind.useCurrentForecast()
+        wind.reload()
+        // Set after the reload, whose empty first pass would clear it.
+        keepsMapOnNextCalculation = true
     }
 
     /** Writes the setup now: when the map comes to rest and when the tool closes. */
@@ -297,6 +314,7 @@ class LandingPatternSession(
     fun placeStandardLandingPoint(coordinate: Coordinate) {
         if (mode != LandingPatternMode.NORMAL || landingPoint != null) return
         landingPoint = coordinate
+        useCurrentWindIfNewPlan()
         wind.reload()
     }
 
@@ -333,6 +351,7 @@ class LandingPatternSession(
         selectedSwoopPoint = SwoopSelection.Start
         newlyAddedWaypointId = null
         swoopSolution = null
+        useCurrentWindIfNewPlan()
         wind.reload()
     }
 
@@ -422,6 +441,14 @@ class LandingPatternSession(
             pendingSwoopStartPoint = null
             swoopSolution = null
         }
+        startsNewPlan = true
+    }
+
+    /** A new plan always starts on the forecast for the current hour, whatever hour or manual wind the last plan used. */
+    private fun useCurrentWindIfNewPlan() {
+        if (!startsNewPlan) return
+        startsNewPlan = false
+        wind.useCurrentForecast()
     }
 
     // Envelope rotation
