@@ -159,6 +159,8 @@ class ExitSpotSession(
     var calculationMessageKey by mutableStateOf<String?>(null)
         private set
     var envelopePreviewDegrees by mutableStateOf<Double?>(null)
+    /** The final heading while a finger turns the pattern, shown in the heading field until release. */
+    var headingPreviewDegrees by mutableStateOf<Double?>(null)
     var noticePage by mutableIntStateOf(0)
     var isNoticeMinimized by mutableStateOf(true)
         private set

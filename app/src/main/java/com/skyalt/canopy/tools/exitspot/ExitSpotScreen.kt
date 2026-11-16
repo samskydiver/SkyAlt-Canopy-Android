@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SportsScore
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -96,6 +95,7 @@ import com.skyalt.canopy.tools.map.ApplyCameraRequests
 import com.skyalt.canopy.tools.map.SavesPlanningSettings
 import com.skyalt.canopy.tools.map.BasePointBadge
 import com.skyalt.canopy.tools.map.DraggableMapMarker
+import com.skyalt.canopy.tools.map.EraserIcon
 import com.skyalt.canopy.tools.map.MapButton
 import com.skyalt.canopy.tools.map.MapInstructionBanner
 import com.skyalt.canopy.tools.map.MapLoadingPill
@@ -178,7 +178,7 @@ fun ExitSpotScreen(session: ExitSpotSession, settings: AppSettings, onBack: () -
                 MapButton(session.mapStyle.icon, s("Change Map Style")) { session.cycleMapStyle() }
                 DistanceUnitButton(session.distanceUnit) { session.toggleDistanceUnit() }
                 if (session.landingPoint != null) {
-                    MapButton(Icons.Filled.Replay, s("Reset Plan")) { session.resetPlan() }
+                    MapButton(EraserIcon, s("Reset Plan")) { session.resetPlan() }
                 }
                 MapButton(session.wind.mode.icon, s("Wind Data Mode"), showsProgress = session.wind.isLoading) { showsWind = true }
             }
@@ -235,8 +235,14 @@ private fun ExitMap(session: ExitSpotSession, myLocation: Boolean, contentPaddin
                 rotationStartHeading = session.finalApproachHeadingDegrees
                 session.beginEnvelopeRotation()
             },
-            onRotate = { session.envelopePreviewDegrees = it },
-            onEnd = { session.finishEnvelopeRotation(rotationStartHeading, it) },
+            onRotate = {
+                session.envelopePreviewDegrees = it
+                session.headingPreviewDegrees = Geodesy.normalizedDegrees(rotationStartHeading + it)
+            },
+            onEnd = {
+                session.finishEnvelopeRotation(rotationStartHeading, it)
+                session.headingPreviewDegrees = null
+            },
         ).jumpRunGesture(session),
         cameraPositionState = session.camera,
         properties = MapProperties(mapType = session.mapStyle.mapType, isMyLocationEnabled = myLocation),
@@ -648,7 +654,7 @@ private fun InputBar(session: ExitSpotSession, landscape: Boolean) {
     @Composable
     fun approach(modifier: Modifier) = Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         SwipeNumberInput(
-            s("Final heading"), session.finalApproachHeadingDegrees, "°", 0, 1.0, { session.updateFinalApproachHeading(it) },
+            s("Final heading"), session.headingPreviewDegrees ?: session.finalApproachHeadingDegrees, "°", 0, 1.0, { session.updateFinalApproachHeading(it) },
             dpPerStep = 2f, valueFontSize = 18.sp, titleFontSize = 11.sp, titleColor = secondary, modifier = Modifier.weight(1f),
         )
         VerticalDivider(Modifier.height(38.dp))

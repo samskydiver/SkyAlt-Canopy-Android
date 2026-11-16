@@ -238,6 +238,15 @@ class WindController(
         saved.manualLayers?.let { manualLayers = it }
     }
 
+    /**
+     * Switches to the forecast for the current hour without fetching it;
+     * the manual layers stay as they were for a later switch back.
+     */
+    fun useCurrentForecast() {
+        mode = WindSourceMode.FORECAST
+        forecastDate = WindProfile.forecastHour(Instant.now())
+    }
+
     /** Loads winds for a restored plan, unless they are already here or on the way. */
     fun resumeIfNeeded() {
         if (anchor() == null || profile != null || isLoading) return
